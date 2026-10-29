@@ -344,11 +344,183 @@ The backend integrates with the **Open-Meteo Forecast API** (`https://api.open-m
         "provider": "Open-Meteo Forecast API",
         "limitations": "Hourly precipitation and snowfall represent 1-hour average rates derived from accumulated forecast amounts, not instantaneous radar rates. Missing values are preserved as null."
       },
+---
+
+### Weather Hazard Risk Scoring Engine
+
+The backend implements a modular, deterministic risk-scoring engine (`WeatherRiskService`) that evaluates weather hazard severity at each checkpoint and calculates segment-level and route-level risk assessments based on vehicle characteristics (e.g. truck load weight in pounds).
+
+#### 1. Hazard Threshold Definitions
+
+| Hazard Level | Wind Speed (`mph`) | Precipitation Intensity (`in/h`) | Snowfall Intensity (`in/h`) | Numeric Score | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Low** | `< 25.0` | `< 0.10` | `< 0.50` | `10.0` | Negligible impact on heavy truck stability and braking. |
+| **Moderate** | `25.0 – 34.0` | `0.10 – 0.25` | `0.50 – 1.00` | `35.0` | Noticeable crosswinds or reduced visibility; minor speed reduction advised. |
+| **High** | `35.0 – 44.0` | `> 0.25 – 0.50` | `> 1.00 – 2.00` | `60.0` | High crosswinds or slick roads; elevated rollover/jackknife risk. |
+| **Severe** | `45.0 – 54.0` | `> 0.50 – 1.00` | `> 2.00 – 3.00` | `80.0` | Severe weather hazard; dangerous driving conditions. |
+| **No Travel** | `>= 55.0` | `> 1.00` | `> 3.00` | `100.0` | Extreme hazard; imminent rollover, whiteout, or hydroplaning. Travel unsafe. |
+| **Unknown** | Missing / Null | Missing / Null | Missing / Null | `null` | Weather data unavailable; risk cannot be determined or certified. |
+
+#### 2. Truck Load-Specific Elevation Rules
+
+High winds exert severe aerodynamic tipping forces on commercial tractor-trailers, significantly exacerbated by cargo weight distribution:
+
+1. **Universal No-Travel Rule**: Sustained wind speed **at or above 55 mph** enforces **No Travel** for every vehicle regardless of weight.
+2. **Heavy Load Rule (> 30,000 lb)**: Wind from **45 to below 55 mph** is elevated to **No Travel** when cargo load weight exceeds **30,000 lb** (standard base category: *Severe*).
+3. **Very Heavy Load Rule (> 40,000 lb)**: Wind from **35 to below 45 mph** is elevated to **Severe** when cargo load weight exceeds **40,000 lb** (standard base category: *High*).
+
+#### 3. Multi-Hazard Governance & Missing-Data Safety
+
+- **Most Severe Hazard Governs**: Wind, precipitation, and snowfall are evaluated independently. The highest individual hazard category determines the checkpoint's overall `risk_level`.
+- **Component Preservation**: Detailed evaluations for all three hazards are preserved in `risk_components` (`wind`, `precipitation`, `snowfall`) along with the specific trigger reason and load-elevation flags.
+- **Strict Missing-Data Safety Policy**: Missing weather measurements are strictly represented as `null`. Missing data is **never** treated as zero, and checkpoints with missing hazard observations are **never** certified as *Low* risk. Data quality is explicitly tracked as `available`, `partial`, or `unavailable`.
+
+#### 4. Route Summary & Segment Distance Methodology
+
+- **Segment Distance Attribution**: Each checkpoint represents the road segment centered around it:
+  - Departure (Checkpoint 1) represents $0$ to midpoint with Checkpoint 2: $d_1 / 2$.
+  - Intermediate Checkpoint $i$ represents midpoint $(i-1, i)$ to midpoint $(i, i+1)$: $(d_{i+1} - d_{i-1}) / 2$.
+  - Arrival (Checkpoint $N$) represents midpoint $(N-1, N)$ to destination: $(d_N - d_{N-1}) / 2$.
+  - *Mathematical Consistency*: The sum of all checkpoint segment distances equals the total route distance precisely without gaps or overlap.
+- **Categorical Mileages**: Distance affected by each category is calculated explicitly (`low_risk_miles`, `moderate_risk_miles`, `high_risk_miles`, `severe_risk_miles`, `no_travel_miles`, `unknown_risk_miles`).
+- **No-Travel Warnings**: Any route segment flagged as `no_travel` immediately triggers `no_travel_warning: true` and elevates the route `overall_risk_level` to `no_travel`.
+- **Distance-Weighted Average Score**: Route `risk_score` is computed as the distance-weighted average over all scored segments: $\frac{\sum (\text{Segment Miles}_i \times \text{Score}_i)}{\sum \text{Segment Miles}_i}$.
+
+---
+
+#### Response Schema & Example
+
+```json
+{
+  "status": "planned",
+  "message": "Routes successfully calculated via Mapbox Directions API with weather forecasts from Open-Meteo and load-specific weather hazard risk assessments. Note: Routes reflect standard driving directions and do not yet account for truck height/weight limits or road closures.",
+  "request_summary": {
+    "origin": "Chicago, IL",
+    "destination": "Dallas, TX",
+    "departure_datetime": "2026-10-30T08:00:00Z",
+    "load_weight_lb": 45000.0,
+    "checkpoint_interval_miles": 50
+  },
+  "routes": [
+    {
+      "route_id": "mapbox-route-1",
+      "display_name": "Primary Route (via I-55 S, I-30 W)",
+      "distance_km": 1488.5,
+      "distance_miles": 924.6,
+      "duration_seconds": 50400,
+      "duration_formatted": "14h 0m",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-87.6298, 41.8781],
+          [-90.1994, 38.6270],
+          [-96.7970, 32.7767]
+        ]
+      },
+      "checkpoints": [
+        {
+          "sequence": 1,
+          "name": "Departure: Chicago, IL",
+          "latitude": 41.8781,
+          "longitude": -87.6298,
+          "estimated_arrival": "2026-10-30T08:00:00Z",
+          "distance_from_origin_km": 0.0,
+          "distance_from_origin_miles": 0.0,
+          "duration_from_origin_seconds": 0,
+          "weather": {
+            "timestamp": "2026-10-30T08:00:00Z",
+            "forecast_timestamp": "2026-10-30T08:00:00+00:00",
+            "data_availability": "available",
+            "temperature": 42.0,
+            "condition": "Overcast",
+            "weather_code": 3,
+            "wind_speed_mph": 38.0,
+            "wind_gust_mph": 44.0,
+            "precipitation_probability": 20.0,
+            "precipitation_in_per_hour": 0.0,
+            "snowfall_in_per_hour": 0.0,
+            "precipitation_accumulation_in": 0.0,
+            "snowfall_accumulation_in": 0.0,
+            "units": {
+              "temperature": "°F",
+              "wind_speed": "mph",
+              "wind_gust": "mph",
+              "precipitation": "in/h",
+              "snowfall": "in/h",
+              "precipitation_probability": "%",
+              "visibility": "miles"
+            }
+          },
+          "risk_level": "severe",
+          "risk_score": 80.0,
+          "risk_components": {
+            "wind": {
+              "hazard": "wind",
+              "risk_level": "severe",
+              "score": 80.0,
+              "value": 38.0,
+              "unit": "mph",
+              "reason": "Wind speed (38.0 mph in 35-44 mph range) elevated to Severe for very heavy load (45,000 lb > 40,000 lb).",
+              "is_elevated_by_load": true
+            },
+            "precipitation": {
+              "hazard": "precipitation",
+              "risk_level": "low",
+              "score": 10.0,
+              "value": 0.0,
+              "unit": "in/h",
+              "reason": "Low precipitation rate (0.00 in/h < 0.10 in/h)."
+            },
+            "snowfall": {
+              "hazard": "snowfall",
+              "risk_level": "low",
+              "score": 10.0,
+              "value": 0.0,
+              "unit": "in/h",
+              "reason": "Low snowfall rate (0.00 in/h < 0.50 in/h)."
+            }
+          },
+          "risk_factors": [
+            "Wind speed (38.0 mph in 35-44 mph range) elevated to Severe for very heavy load (45,000 lb > 40,000 lb)."
+          ],
+          "risk_summary": "SEVERE HAZARD: Wind speed (38.0 mph in 35-44 mph range) elevated to Severe for very heavy load (45,000 lb > 40,000 lb).",
+          "data_quality": "available"
+        }
+      ],
+      "weather_summary": {
+        "total_checkpoints": 20,
+        "available_checkpoints": 20,
+        "max_wind_speed_mph": 38.0,
+        "max_precipitation_in_per_hour": 0.15,
+        "max_snowfall_in_per_hour": 0.0,
+        "conditions_observed": ["Overcast"],
+        "provider": "Open-Meteo Forecast API",
+        "limitations": "Hourly precipitation and snowfall represent 1-hour average rates derived from accumulated forecast amounts, not instantaneous radar rates. Missing values are preserved as null."
+      },
       "risk_assessment": {
-        "overall_risk_level": "unknown",
-        "risk_score": null,
-        "risk_factors": [],
-        "summary": "Weather hazard risk scoring is not yet integrated."
+        "overall_risk_level": "severe",
+        "risk_score": 75.5,
+        "risk_factors": [
+          "Wind speed (38.0 mph in 35-44 mph range) elevated to Severe for very heavy load (45,000 lb > 40,000 lb)."
+        ],
+        "summary": "SEVERE RISK: Route encounters 75.0 severe weather miles for load weight of 45,000 lb. Extreme caution and reduced speeds required.",
+        "total_distance_miles": 924.6,
+        "low_risk_miles": 450.0,
+        "moderate_risk_miles": 200.0,
+        "high_risk_miles": 199.6,
+        "severe_risk_miles": 75.0,
+        "no_travel_miles": 0.0,
+        "unknown_risk_miles": 0.0,
+        "no_travel_segments_count": 0,
+        "no_travel_warning": false,
+        "data_quality": "available",
+        "assumptions": [
+          "Threshold evaluation: Wind speed (mph), precipitation intensity (in/h), and snowfall intensity (in/h) are evaluated independently; the most severe hazard governs the checkpoint risk level.",
+          "Load-specific rules: Wind >= 55 mph enforces No Travel for all loads. Wind 45 to <55 mph enforces No Travel when load weight is > 30,000 lb. Wind 35 to <45 mph elevates to Severe when load weight is > 40,000 lb.",
+          "Missing weather data: Checkpoints with missing weather measurements are explicitly marked with data quality 'partial' or 'unavailable'. Missing data is never treated as zero and is never assigned Low risk.",
+          "Segment attribution: Each checkpoint represents the route segment centered on its location (half-distance to previous checkpoint plus half-distance to next checkpoint; endpoints cover half-distance to adjacent checkpoint). Segment miles sum precisely to total route distance.",
+          "Numeric scoring: Categorical risks map to standard scores (Low: 10, Moderate: 35, High: 60, Severe: 80, No Travel: 100, Unknown: None). Route score is the distance-weighted average over scored segments."
+        ]
       },
       "recommendation": {
         "is_recommended": true,
@@ -371,28 +543,9 @@ curl -i -X POST http://127.0.0.1:8000/api/routes/ \
     "origin": "Chicago, IL",
     "destination": "Dallas, TX",
     "departure_datetime": "2026-10-30T08:00:00Z",
-    "load_weight_lb": 35000.0,
+    "load_weight_lb": 45000.0,
     "checkpoint_interval_miles": 25
   }'
-```
-
-**Invalid Request (Unsupported Interval):**
-```bash
-curl -i -X POST http://127.0.0.1:8000/api/routes/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "origin": "Chicago, IL",
-    "destination": "Dallas, TX",
-    "departure_datetime": "2026-10-30T08:00:00Z",
-    "load_weight_lb": 35000.0,
-    "checkpoint_interval_miles": 15
-  }'
-```
-Response (`400 Bad Request`):
-```json
-{
-  "checkpoint_interval_miles": ["Checkpoint interval must be 10, 25, or 50 miles."]
-}
 ```
 
 ---
@@ -424,9 +577,10 @@ npm run build
 
 ## Next Steps
 
-- Weather hazard risk scoring engine (evaluating wind, rain, snow risks against truck load weight)
-- Route ranking and recommendation algorithm
-- Interactive map UI and route visualization with weather layer
+- Route ranking and recommendation algorithm (ranking candidate routes by safety and weather severity)
+- Interactive map UI and route visualization with weather heatmap layer
+
+
 
 
 

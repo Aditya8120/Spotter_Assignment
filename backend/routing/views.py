@@ -18,6 +18,7 @@ from .services import (
     MapboxNoRouteError,
     MapboxGeocodingError,
     OpenMeteoWeatherService,
+    WeatherRiskService,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,10 @@ def plan_routes(request):
         # Fetch and attach weather forecasts for checkpoint arrival times
         weather_service = OpenMeteoWeatherService()
         weather_service.attach_weather_to_routes(routes)
+
+        # Evaluate and attach weather hazard risk assessments based on load weight
+        risk_service = WeatherRiskService()
+        risk_service.attach_risk_to_routes(routes, load_weight_lb=validated['load_weight_lb'])
     except MapboxConfigurationError as exc:
         logger.warning("Mapbox routing unconfigured: %s", exc)
         return Response(
@@ -161,9 +166,9 @@ def plan_routes(request):
     response_payload = {
         "status": "planned",
         "message": (
-            "Routes successfully calculated via Mapbox Directions API with weather forecasts from Open-Meteo. "
-            "Note: Routes reflect standard driving directions and do not yet account for truck restrictions "
-            "(height/weight limits) or road closures."
+            "Routes successfully calculated via Mapbox Directions API with weather forecasts from Open-Meteo "
+            "and load-specific weather hazard risk assessments. Note: Routes reflect standard driving directions "
+            "and do not yet account for truck height/weight limits or road closures."
         ),
         "request_summary": {
             "origin": validated['origin'],

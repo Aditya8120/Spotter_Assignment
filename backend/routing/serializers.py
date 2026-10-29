@@ -254,10 +254,14 @@ class CheckpointSerializer(serializers.Serializer):
     duration_from_origin_seconds = serializers.IntegerField(allow_null=True, required=False)
     weather = WeatherObservationSerializer(allow_null=True, required=False)
     risk_level = serializers.ChoiceField(
-        choices=['low', 'moderate', 'high', 'severe', 'unknown'],
+        choices=['low', 'moderate', 'high', 'severe', 'no_travel', 'unknown'],
         default='unknown'
     )
+    risk_score = serializers.FloatField(allow_null=True, required=False)
+    risk_components = serializers.DictField(allow_null=True, required=False)
+    risk_factors = serializers.ListField(child=serializers.CharField(), default=list, required=False)
     risk_summary = serializers.CharField(allow_null=True, required=False)
+    data_quality = serializers.CharField(allow_null=True, required=False)
 
 
 class RouteRecommendationSerializer(serializers.Serializer):
@@ -273,7 +277,7 @@ class RouteRecommendationSerializer(serializers.Serializer):
 class RiskAssessmentSerializer(serializers.Serializer):
     """Overall route risk score, level, and hazard factors."""
     overall_risk_level = serializers.ChoiceField(
-        choices=['low', 'moderate', 'high', 'severe', 'unknown'],
+        choices=['low', 'moderate', 'high', 'severe', 'no_travel', 'unknown'],
         default='unknown'
     )
     risk_score = serializers.FloatField(allow_null=True, required=False)
@@ -282,6 +286,21 @@ class RiskAssessmentSerializer(serializers.Serializer):
         default=list
     )
     summary = serializers.CharField(allow_blank=True)
+    total_distance_miles = serializers.FloatField(allow_null=True, required=False)
+    low_risk_miles = serializers.FloatField(allow_null=True, required=False)
+    moderate_risk_miles = serializers.FloatField(allow_null=True, required=False)
+    high_risk_miles = serializers.FloatField(allow_null=True, required=False)
+    severe_risk_miles = serializers.FloatField(allow_null=True, required=False)
+    no_travel_miles = serializers.FloatField(allow_null=True, required=False)
+    unknown_risk_miles = serializers.FloatField(allow_null=True, required=False)
+    no_travel_segments_count = serializers.IntegerField(default=0, required=False)
+    no_travel_warning = serializers.BooleanField(default=False, required=False)
+    data_quality = serializers.CharField(allow_null=True, required=False)
+    assumptions = serializers.ListField(
+        child=serializers.CharField(),
+        default=list,
+        required=False
+    )
 
 
 class RouteOptionSerializer(serializers.Serializer):

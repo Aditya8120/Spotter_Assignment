@@ -25,6 +25,13 @@ from .services import (
     WeatherTimeoutError,
     WeatherConnectionError,
     WeatherRateLimitError,
+    WeatherRiskService,
+    RISK_LEVEL_LOW,
+    RISK_LEVEL_MODERATE,
+    RISK_LEVEL_HIGH,
+    RISK_LEVEL_SEVERE,
+    RISK_LEVEL_NO_TRAVEL,
+    RISK_LEVEL_UNKNOWN,
 )
 
 
@@ -1195,6 +1202,470 @@ class RoutePlanningWeatherIntegrationTests(APITestCase):
         cp_weather = primary["checkpoints"][0]["weather"]
         self.assertEqual(cp_weather["data_availability"], "unavailable")
         self.assertIn("timed out", cp_weather["notes"])
+
+
+# =========================================================================
+# Step 6: Weather Risk Scoring Engine Unit & Integration Tests
+# =========================================================================
+
+class WeatherRiskServiceThresholdTests(APITestCase):
+    """
+    Automated unit tests for WeatherRiskService verifying:
+    - Exact wind threshold boundaries
+    - Load-specific wind elevation rules (55+ mph, 45-54 mph > 30k, 35-44 mph > 40k)
+    - Exact precipitation threshold boundaries
+    - Exact snowfall threshold boundaries
+    - Multiple simultaneous hazards (most severe applied, components preserved)
+    - Explicit handling of missing weather data (never defaulted to zero, never assumed Low)
+    """
+
+    def setUp(self):
+        self.service = WeatherRiskService()
+
+    # --- Wind Thresholds & Load Rules ---
+
+    def test_wind_threshold_low(self):
+        """Wind below 25 mph evaluates to Low across all loads."""
+        for speed in [0.0, 10.0, 24.0, 24.9]:
+            res = self.service.evaluate_wind_risk(speed, load_weight_lb=50000.0)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_LOW)
+            self.assertEqual(res["score"], 10.0)
+            self.assertFalse(res["is_elevated_by_load"])
+
+    def test_wind_threshold_moderate(self):
+        """Wind 25–34 mph evaluates to Moderate across all loads."""
+        for speed in [25.0, 29.5, 34.0, 34.9]:
+            res = self.service.evaluate_wind_risk(speed, load_weight_lb=50000.0)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_MODERATE)
+            self.assertEqual(res["score"], 35.0)
+            self.assertFalse(res["is_elevated_by_load"])
+
+    def test_wind_threshold_high_unmodified_by_light_load(self):
+        """Wind 35–44 mph with load <= 40,000 lb evaluates to High."""
+        for speed in [35.0, 40.0, 44.0, 44.9]:
+            res = self.service.evaluate_wind_risk(speed, load_weight_lb=25000.0)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_HIGH)
+            self.assertEqual(res["score"], 60.0)
+            self.assertFalse(res["is_elevated_by_load"])
+
+        # Boundary: exactly 40,000 lb is not above 40,000 lb
+        res_boundary = self.service.evaluate_wind_risk(38.0, load_weight_lb=40000.0)
+        self.assertEqual(res_boundary["risk_level"], RISK_LEVEL_HIGH)
+        self.assertFalse(res_boundary["is_elevated_by_load"])
+
+    def test_wind_load_rule_35_to_45_elevates_to_severe_above_40k(self):
+        """Wind 35 to <45 mph elevates to Severe when load weight > 40,000 lb."""
+        # 40,001 lb is above 40,000 lb
+        res_40001 = self.service.evaluate_wind_risk(35.0, load_weight_lb=40001.0)
+        self.assertEqual(res_40001["risk_level"], RISK_LEVEL_SEVERE)
+        self.assertEqual(res_40001["score"], 80.0)
+        self.assertTrue(res_40001["is_elevated_by_load"])
+
+        res_heavy = self.service.evaluate_wind_risk(42.0, load_weight_lb=50000.0)
+        self.assertEqual(res_heavy["risk_level"], RISK_LEVEL_SEVERE)
+        self.assertTrue(res_heavy["is_elevated_by_load"])
+
+    def test_wind_threshold_severe_unmodified_by_light_load(self):
+        """Wind 45–54 mph with load <= 30,000 lb evaluates to Severe."""
+        for speed in [45.0, 50.0, 54.0, 54.9]:
+            res = self.service.evaluate_wind_risk(speed, load_weight_lb=25000.0)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_SEVERE)
+            self.assertEqual(res["score"], 80.0)
+            self.assertFalse(res["is_elevated_by_load"])
+
+        # Boundary: exactly 30,000 lb is not above 30,000 lb
+        res_boundary = self.service.evaluate_wind_risk(48.0, load_weight_lb=30000.0)
+        self.assertEqual(res_boundary["risk_level"], RISK_LEVEL_SEVERE)
+        self.assertFalse(res_boundary["is_elevated_by_load"])
+
+    def test_wind_load_rule_45_to_55_elevates_to_no_travel_above_30k(self):
+        """Wind 45 to <55 mph elevates to No Travel when load weight > 30,000 lb."""
+        # 30,001 lb is above 30,000 lb
+        res_30001 = self.service.evaluate_wind_risk(45.0, load_weight_lb=30001.0)
+        self.assertEqual(res_30001["risk_level"], RISK_LEVEL_NO_TRAVEL)
+        self.assertEqual(res_30001["score"], 100.0)
+        self.assertTrue(res_30001["is_elevated_by_load"])
+
+        res_heavy = self.service.evaluate_wind_risk(50.0, load_weight_lb=45000.0)
+        self.assertEqual(res_heavy["risk_level"], RISK_LEVEL_NO_TRAVEL)
+        self.assertTrue(res_heavy["is_elevated_by_load"])
+
+    def test_wind_rule_55_plus_no_travel_for_every_load(self):
+        """Wind at or above 55 mph means No Travel for every load."""
+        for speed in [55.0, 60.0, 80.0]:
+            for load in [5000.0, 20000.0, 30000.0, 45000.0, 80000.0]:
+                res = self.service.evaluate_wind_risk(speed, load_weight_lb=load)
+                self.assertEqual(res["risk_level"], RISK_LEVEL_NO_TRAVEL)
+                self.assertEqual(res["score"], 100.0)
+
+    # --- Precipitation Thresholds ---
+
+    def test_precipitation_thresholds(self):
+        """Verifies liquid precipitation rate thresholds (in/h)."""
+        # Low: below 0.10
+        for rate in [0.0, 0.05, 0.09]:
+            res = self.service.evaluate_precipitation_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_LOW)
+            self.assertEqual(res["score"], 10.0)
+
+        # Moderate: 0.10–0.25
+        for rate in [0.10, 0.18, 0.25]:
+            res = self.service.evaluate_precipitation_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_MODERATE)
+            self.assertEqual(res["score"], 35.0)
+
+        # High: above 0.25–0.50
+        for rate in [0.26, 0.40, 0.50]:
+            res = self.service.evaluate_precipitation_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_HIGH)
+            self.assertEqual(res["score"], 60.0)
+
+        # Severe: above 0.50–1.00
+        for rate in [0.51, 0.75, 1.00]:
+            res = self.service.evaluate_precipitation_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_SEVERE)
+            self.assertEqual(res["score"], 80.0)
+
+        # No Travel: above 1.00
+        for rate in [1.01, 1.50, 3.00]:
+            res = self.service.evaluate_precipitation_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_NO_TRAVEL)
+            self.assertEqual(res["score"], 100.0)
+
+    # --- Snowfall Thresholds ---
+
+    def test_snowfall_thresholds(self):
+        """Verifies snowfall rate thresholds (in/h)."""
+        # Low: below 0.5
+        for rate in [0.0, 0.2, 0.49]:
+            res = self.service.evaluate_snowfall_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_LOW)
+            self.assertEqual(res["score"], 10.0)
+
+        # Moderate: 0.5–1.0
+        for rate in [0.50, 0.80, 1.00]:
+            res = self.service.evaluate_snowfall_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_MODERATE)
+            self.assertEqual(res["score"], 35.0)
+
+        # High: above 1.0–2.0
+        for rate in [1.01, 1.50, 2.00]:
+            res = self.service.evaluate_snowfall_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_HIGH)
+            self.assertEqual(res["score"], 60.0)
+
+        # Severe: above 2.0–3.0
+        for rate in [2.01, 2.50, 3.00]:
+            res = self.service.evaluate_snowfall_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_SEVERE)
+            self.assertEqual(res["score"], 80.0)
+
+        # No Travel: above 3.0
+        for rate in [3.01, 3.50, 5.00]:
+            res = self.service.evaluate_snowfall_risk(rate)
+            self.assertEqual(res["risk_level"], RISK_LEVEL_NO_TRAVEL)
+            self.assertEqual(res["score"], 100.0)
+
+    # --- Simultaneous Hazards & Checkpoint Evaluation ---
+
+    def test_simultaneous_hazards_highest_severity_governs_checkpoint(self):
+        """When multiple hazards are active, the most severe governs overall checkpoint risk."""
+        # Case A: Wind Moderate (28 mph), Precip Severe (0.65 in/h), Snow Low (0.0)
+        cp_a = {
+            "sequence": 1,
+            "latitude": 41.8781,
+            "longitude": -87.6298,
+            "weather": {
+                "wind_speed_mph": 28.0,
+                "precipitation_in_per_hour": 0.65,
+                "snowfall_in_per_hour": 0.0,
+                "data_availability": "available",
+            }
+        }
+        res_a = self.service.evaluate_checkpoint_risk(cp_a, load_weight_lb=35000.0)
+        self.assertEqual(res_a["risk_level"], RISK_LEVEL_SEVERE)
+        self.assertEqual(res_a["risk_score"], 80.0)
+        self.assertEqual(res_a["risk_components"]["wind"]["risk_level"], RISK_LEVEL_MODERATE)
+        self.assertEqual(res_a["risk_components"]["precipitation"]["risk_level"], RISK_LEVEL_SEVERE)
+        self.assertEqual(res_a["risk_components"]["snowfall"]["risk_level"], RISK_LEVEL_LOW)
+
+        # Case B: Wind High (40 mph, load 25k -> High), Precip Low, Snow No Travel (3.5 in/h)
+        cp_b = {
+            "sequence": 2,
+            "latitude": 41.8781,
+            "longitude": -87.6298,
+            "weather": {
+                "wind_speed_mph": 40.0,
+                "precipitation_in_per_hour": 0.05,
+                "snowfall_in_per_hour": 3.5,
+                "data_availability": "available",
+            }
+        }
+        res_b = self.service.evaluate_checkpoint_risk(cp_b, load_weight_lb=25000.0)
+        self.assertEqual(res_b["risk_level"], RISK_LEVEL_NO_TRAVEL)
+        self.assertEqual(res_b["risk_score"], 100.0)
+        self.assertEqual(res_b["risk_components"]["snowfall"]["risk_level"], RISK_LEVEL_NO_TRAVEL)
+
+        # Case C: Wind 38 mph elevated to Severe by load > 40k, Precip Moderate (0.20 in/h)
+        cp_c = {
+            "sequence": 3,
+            "latitude": 41.8781,
+            "longitude": -87.6298,
+            "weather": {
+                "wind_speed_mph": 38.0,
+                "precipitation_in_per_hour": 0.20,
+                "snowfall_in_per_hour": 0.0,
+                "data_availability": "available",
+            }
+        }
+        res_c = self.service.evaluate_checkpoint_risk(cp_c, load_weight_lb=45000.0)
+        self.assertEqual(res_c["risk_level"], RISK_LEVEL_SEVERE)
+        self.assertTrue(res_c["risk_components"]["wind"]["is_elevated_by_load"])
+
+    # --- Missing Weather Data Handling ---
+
+    def test_missing_weather_data_handling(self):
+        """Missing values are never defaulted to zero and never assigned Low risk."""
+        # 1. Weather completely missing or marked unavailable
+        cp_none = {
+            "sequence": 1,
+            "latitude": 41.8781,
+            "longitude": -87.6298,
+            "weather": None,
+        }
+        res_none = self.service.evaluate_checkpoint_risk(cp_none, load_weight_lb=35000.0)
+        self.assertEqual(res_none["risk_level"], RISK_LEVEL_UNKNOWN)
+        self.assertIsNone(res_none["risk_score"])
+        self.assertEqual(res_none["data_quality"], "unavailable")
+
+        # 2. Known measurements are Low, but others are missing
+        # Requirement 8: Do not assign Low risk when data is unknown!
+        cp_partial_low = {
+            "sequence": 2,
+            "latitude": 41.8781,
+            "longitude": -87.6298,
+            "weather": {
+                "wind_speed_mph": 12.0,  # Low
+                "precipitation_in_per_hour": None,  # Missing
+                "snowfall_in_per_hour": None,  # Missing
+                "data_availability": "partial",
+            }
+        }
+        res_partial_low = self.service.evaluate_checkpoint_risk(cp_partial_low, load_weight_lb=35000.0)
+        self.assertEqual(res_partial_low["risk_level"], RISK_LEVEL_UNKNOWN)
+        self.assertIsNone(res_partial_low["risk_score"])
+        self.assertEqual(res_partial_low["data_quality"], "partial")
+
+        # 3. Known measurement is No Travel, others missing
+        # Since wind alone warrants No Travel, No Travel holds with partial data quality
+        cp_partial_notravel = {
+            "sequence": 3,
+            "latitude": 41.8781,
+            "longitude": -87.6298,
+            "weather": {
+                "wind_speed_mph": 58.0,  # No Travel
+                "precipitation_in_per_hour": None,
+                "snowfall_in_per_hour": None,
+                "data_availability": "partial",
+            }
+        }
+        res_partial_notravel = self.service.evaluate_checkpoint_risk(cp_partial_notravel, load_weight_lb=35000.0)
+        self.assertEqual(res_partial_notravel["risk_level"], RISK_LEVEL_NO_TRAVEL)
+        self.assertEqual(res_partial_notravel["score"] if "score" in res_partial_notravel else res_partial_notravel["risk_score"], 100.0)
+        self.assertEqual(res_partial_notravel["data_quality"], "partial")
+
+
+class WeatherRiskServiceRouteSummaryTests(APITestCase):
+    """
+    Automated unit tests for route-level risk aggregation, segment distance attribution,
+    mileage categorization, and weighted average risk scores.
+    """
+
+    def setUp(self):
+        self.service = WeatherRiskService()
+
+    def test_segment_distance_attribution_and_category_mileage(self):
+        """Verifies segment distance attribution sums precisely to total route distance."""
+        # 5 checkpoints at 0, 25, 50, 75, 100 miles
+        # Total distance = 100.0 miles
+        checkpoints = [
+            {
+                "sequence": 1,
+                "distance_from_origin_miles": 0.0,
+                "weather": {"wind_speed_mph": 10.0, "precipitation_in_per_hour": 0.0, "snowfall_in_per_hour": 0.0, "data_availability": "available"},
+            },
+            {
+                "sequence": 2,
+                "distance_from_origin_miles": 25.0,
+                "weather": {"wind_speed_mph": 28.0, "precipitation_in_per_hour": 0.0, "snowfall_in_per_hour": 0.0, "data_availability": "available"},
+            },
+            {
+                "sequence": 3,
+                "distance_from_origin_miles": 50.0,
+                "weather": {"wind_speed_mph": 38.0, "precipitation_in_per_hour": 0.0, "snowfall_in_per_hour": 0.0, "data_availability": "available"},
+            },
+            {
+                "sequence": 4,
+                "distance_from_origin_miles": 75.0,
+                "weather": {"wind_speed_mph": 48.0, "precipitation_in_per_hour": 0.0, "snowfall_in_per_hour": 0.0, "data_availability": "available"},
+            },
+            {
+                "sequence": 5,
+                "distance_from_origin_miles": 100.0,
+                "weather": {"wind_speed_mph": 60.0, "precipitation_in_per_hour": 0.0, "snowfall_in_per_hour": 0.0, "data_availability": "available"},
+            },
+        ]
+
+        route_data = {
+            "distance_miles": 100.0,
+            "checkpoints": checkpoints,
+        }
+
+        # Load weight 25,000 lb:
+        # cp1 (0 mi): Low (length: 12.5 mi)
+        # cp2 (25 mi): Moderate (length: 25.0 mi)
+        # cp3 (50 mi): High (length: 25.0 mi)
+        # cp4 (75 mi): Severe (length: 25.0 mi)
+        # cp5 (100 mi): No Travel (length: 12.5 mi)
+        assessment = self.service.evaluate_route_risk(route_data, load_weight_lb=25000.0)
+
+        self.assertEqual(assessment["total_distance_miles"], 100.0)
+        self.assertEqual(assessment["low_risk_miles"], 12.5)
+        self.assertEqual(assessment["moderate_risk_miles"], 25.0)
+        self.assertEqual(assessment["high_risk_miles"], 25.0)
+        self.assertEqual(assessment["severe_risk_miles"], 25.0)
+        self.assertEqual(assessment["no_travel_miles"], 12.5)
+
+        # Sum of category miles equals total distance
+        total_sum = (
+            assessment["low_risk_miles"]
+            + assessment["moderate_risk_miles"]
+            + assessment["high_risk_miles"]
+            + assessment["severe_risk_miles"]
+            + assessment["no_travel_miles"]
+        )
+        self.assertAlmostEqual(total_sum, 100.0, places=1)
+
+        # Overall level is No Travel due to cp5
+        self.assertEqual(assessment["overall_risk_level"], RISK_LEVEL_NO_TRAVEL)
+        self.assertEqual(assessment["no_travel_segments_count"], 1)
+        self.assertTrue(assessment["no_travel_warning"])
+        self.assertIn("NO TRAVEL WARNING", assessment["summary"])
+
+        # Weighted score: (12.5*10 + 25*35 + 25*60 + 25*80 + 12.5*100) / 100 = (125 + 875 + 1500 + 2000 + 1250) / 100 = 5750 / 100 = 57.5
+        self.assertEqual(assessment["risk_score"], 57.5)
+
+        # Assumptions documented
+        self.assertGreaterEqual(len(assessment["assumptions"]), 4)
+
+    def test_route_summary_all_low_risk(self):
+        """A route with all favorable weather evaluates to Low overall."""
+        checkpoints = [
+            {
+                "sequence": 1,
+                "distance_from_origin_miles": 0.0,
+                "weather": {"wind_speed_mph": 10.0, "precipitation_in_per_hour": 0.0, "snowfall_in_per_hour": 0.0, "data_availability": "available"},
+            },
+            {
+                "sequence": 2,
+                "distance_from_origin_miles": 50.0,
+                "weather": {"wind_speed_mph": 12.0, "precipitation_in_per_hour": 0.02, "snowfall_in_per_hour": 0.0, "data_availability": "available"},
+            },
+        ]
+        route_data = {"distance_miles": 50.0, "checkpoints": checkpoints}
+        assessment = self.service.evaluate_route_risk(route_data, load_weight_lb=35000.0)
+
+        self.assertEqual(assessment["overall_risk_level"], RISK_LEVEL_LOW)
+        self.assertEqual(assessment["low_risk_miles"], 50.0)
+        self.assertEqual(assessment["no_travel_segments_count"], 0)
+        self.assertFalse(assessment["no_travel_warning"])
+        self.assertEqual(assessment["risk_score"], 10.0)
+        self.assertIn("LOW RISK", assessment["summary"])
+
+    def test_route_summary_all_unknown_weather(self):
+        """A route with completely unknown weather evaluates to Unknown with null score."""
+        checkpoints = [
+            {"sequence": 1, "distance_from_origin_miles": 0.0, "weather": None},
+            {"sequence": 2, "distance_from_origin_miles": 40.0, "weather": None},
+        ]
+        route_data = {"distance_miles": 40.0, "checkpoints": checkpoints}
+        assessment = self.service.evaluate_route_risk(route_data, load_weight_lb=35000.0)
+
+        self.assertEqual(assessment["overall_risk_level"], RISK_LEVEL_UNKNOWN)
+        self.assertIsNone(assessment["risk_score"])
+        self.assertEqual(assessment["unknown_risk_miles"], 40.0)
+        self.assertEqual(assessment["data_quality"], "unavailable")
+
+
+class RoutePlanningRiskIntegrationTests(APITestCase):
+    """
+    End-to-end integration tests for POST /api/routes/ verifying that
+    risk scoring engine runs, annotates checkpoints, and produces route risk assessments.
+    """
+
+    def setUp(self):
+        self.url = reverse('plan_routes')
+        self.valid_payload = {
+            "origin": "Chicago, IL",
+            "destination": "Dallas, TX",
+            "departure_datetime": "2026-10-30T08:00:00Z",
+            "load_weight_lb": 45000.0,  # Heavy load > 40,000 lb
+            "checkpoint_interval_miles": 50,
+        }
+
+    @patch.dict('os.environ', {'MAPBOX_ACCESS_TOKEN': 'pk.mock-token'})
+    @patch('requests.get')
+    def test_route_planning_evaluates_risk_and_elevates_for_heavy_load(self, mock_get):
+        """Verifies end-to-end route planning applies risk scoring with load weight rules."""
+        def side_effect(url, **kwargs):
+            resp = MagicMock()
+            resp.ok = True
+            resp.status_code = 200
+            if "mapbox.places" in url:
+                resp.json.return_value = mock_geocoding_feature()
+            elif "mapbox/driving" in url:
+                resp.json.return_value = {
+                    "code": "Ok",
+                    "routes": [mock_mapbox_route(1488000.0, 50400.0)]
+                }
+            elif "open-meteo" in url:
+                # Wind 38.0 mph: for load 45,000 lb (> 40k), this must be elevated to Severe!
+                resp.json.return_value = mock_open_meteo_forecast(
+                    wind_speed=38.0,
+                    precip=0.05,
+                    snow=0.0,
+                    temp=45.0,
+                    weather_code=1,
+                )
+            else:
+                resp.json.return_value = {}
+            return resp
+
+        mock_get.side_effect = side_effect
+
+        response = self.client.post(self.url, self.valid_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        primary = data["routes"][0]
+        checkpoints = primary["checkpoints"]
+        self.assertGreater(len(checkpoints), 0)
+
+        # Checkpoints should be elevated to Severe due to wind 38 mph and load 45k lb
+        cp0 = checkpoints[0]
+        self.assertEqual(cp0["risk_level"], RISK_LEVEL_SEVERE)
+        self.assertEqual(cp0["risk_score"], 80.0)
+        self.assertIn("risk_components", cp0)
+        self.assertTrue(cp0["risk_components"]["wind"]["is_elevated_by_load"])
+
+        # Route-level risk assessment
+        assessment = primary["risk_assessment"]
+        self.assertEqual(assessment["overall_risk_level"], RISK_LEVEL_SEVERE)
+        self.assertEqual(assessment["risk_score"], 80.0)
+        self.assertGreater(assessment["severe_risk_miles"], 0.0)
+        self.assertIn("SEVERE RISK", assessment["summary"])
+        self.assertIn("assumptions", assessment)
+
 
 
 

@@ -23,6 +23,16 @@ from .open_meteo import (
     WeatherConnectionError,
     WeatherRateLimitError,
 )
+from .risk_scoring import (
+    WeatherRiskService,
+    RiskScoringError,
+    RISK_LEVEL_LOW,
+    RISK_LEVEL_MODERATE,
+    RISK_LEVEL_HIGH,
+    RISK_LEVEL_SEVERE,
+    RISK_LEVEL_NO_TRAVEL,
+    RISK_LEVEL_UNKNOWN,
+)
 
 __all__ = [
     "BaseRouteEngine",
@@ -43,4 +53,12 @@ __all__ = [
     "WeatherTimeoutError",
     "WeatherConnectionError",
     "WeatherRateLimitError",
+    "WeatherRiskService",
+    "RiskScoringError",
+    "RISK_LEVEL_LOW",
+    "RISK_LEVEL_MODERATE",
+    "RISK_LEVEL_HIGH",
+    "RISK_LEVEL_SEVERE",
+    "RISK_LEVEL_NO_TRAVEL",
+    "RISK_LEVEL_UNKNOWN",
 ]
