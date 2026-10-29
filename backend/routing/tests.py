@@ -2220,6 +2220,103 @@ class RoutePlanningRecommendationIntegrationTests(APITestCase):
         self.assertFalse(r2["recommendation"]["is_recommended"])
         self.assertEqual(r2["recommendation"]["status"], STATUS_VIABLE_ALTERNATIVE)
 
+    @patch.dict('os.environ', {'MAPBOX_ACCESS_TOKEN': 'pk.mock-token'})
+    @patch('requests.get')
+    def test_route_planning_all_routes_encounter_no_travel_advisories(self, mock_get):
+        """Verifies end-to-end that when extreme weather enforces No Travel on all routes, all_routes_unsafe is set."""
+        def side_effect(url, **kwargs):
+            resp = MagicMock()
+            resp.ok = True
+            resp.status_code = 200
+            if "mapbox.places" in url:
+                resp.json.return_value = mock_geocoding_feature()
+            elif "mapbox/driving" in url:
+                resp.json.return_value = {
+                    "code": "Ok",
+                    "routes": [
+                        mock_mapbox_route(1488000.0, 50400.0, "Route A - Extreme"),
+                        mock_mapbox_route(1520000.0, 48000.0, "Route B - Extreme"),
+                    ]
+                }
+            elif "open-meteo" in url:
+                # 60 mph wind triggers No Travel on all segments
+                resp.json.return_value = mock_open_meteo_forecast(
+                    wind_speed=60.0,
+                    precip=0.0,
+                    snow=0.0,
+                )
+            else:
+                resp.json.return_value = {}
+            return resp
+
+        mock_get.side_effect = side_effect
+
+        response = self.client.post(self.url, self.valid_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        rec_summary = data["recommendation_summary"]
+        self.assertTrue(rec_summary["all_routes_unsafe"])
+        self.assertIsNone(rec_summary["recommended_route_id"])
+        self.assertIn("NO SAFE ROUTE AVAILABLE", rec_summary["executive_summary"])
+
+        for route in data["routes"]:
+            self.assertFalse(route["recommendation"]["is_recommended"])
+            self.assertEqual(route["recommendation"]["status"], STATUS_NOT_RECOMMENDED)
+            self.assertTrue(route["risk_assessment"]["no_travel_warning"])
+
+    @patch.dict('os.environ', {'MAPBOX_ACCESS_TOKEN': 'pk.mock-token'})
+    @patch('requests.get')
+    def test_route_planning_preserves_missing_weather_as_unknown_never_low(self, mock_get):
+        """Verifies end-to-end that missing weather data is preserved as Unknown and never treated as Low risk."""
+        def side_effect(url, **kwargs):
+            resp = MagicMock()
+            resp.ok = True
+            resp.status_code = 200
+            if "mapbox.places" in url:
+                resp.json.return_value = mock_geocoding_feature()
+            elif "mapbox/driving" in url:
+                resp.json.return_value = {
+                    "code": "Ok",
+                    "routes": [
+                        mock_mapbox_route(1488000.0, 50400.0, "Route With Missing Weather"),
+                    ]
+                }
+            elif "open-meteo" in url:
+                # Empty hourly arrays simulating weather provider missing measurements
+                resp.json.return_value = {
+                    "latitude": 41.8781,
+                    "longitude": -87.6298,
+                    "hourly": {
+                        "time": ["2026-10-30T08:00"],
+                        "temperature_2m": [None],
+                        "precipitation": [None],
+                        "snowfall": [None],
+                        "weather_code": [None],
+                        "wind_speed_10m": [None],
+                        "wind_gusts_10m": [None],
+                    }
+                }
+            else:
+                resp.json.return_value = {}
+            return resp
+
+        mock_get.side_effect = side_effect
+
+        response = self.client.post(self.url, self.valid_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        route = data["routes"][0]
+        # Checkpoint risk level must be unknown, NOT low
+        for cp in route["checkpoints"]:
+            self.assertEqual(cp["risk_level"], "unknown")
+            self.assertIsNone(cp["risk_score"])
+        # Overall risk level must be unknown, NOT low
+        self.assertEqual(route["risk_assessment"]["overall_risk_level"], "unknown")
+        self.assertIsNone(route["risk_assessment"]["risk_score"])
+
+
 
 
 

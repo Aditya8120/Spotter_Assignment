@@ -799,15 +799,16 @@ The dashboard includes a fully interactive, responsive map canvas powered by **L
 
 ### 6. Automated Testing
 
-The frontend automated test suite includes **57 tests** across 21 suites:
+The frontend automated test suite includes **61 tests** across 23 suites:
 - **`src/services/api.test.js`**: Payload construction, HTTP responses, error normalization, and health checks.
 - **`src/utils/mapUtils.test.js`**: Coordinate validation, GeoJSON coordinate transformation, bounding box calculation, risk level metadata mapping, route polyline styles, and checkpoint extraction.
 - **`src/utils/mapIntegration.test.js`**: Route selection state transitions, multi-segment corridor rendering with mocked data, checkpoint risk marker classifications, missing geometry handling, and empty result safety.
 - **`src/utils/weatherLayers.test.js`**: Wind/precipitation/snowfall threshold evaluations, load-weight elevations, 0–48h timeline generation, timestamp matching, and layer value extraction.
 - **`src/utils/weatherLayersIntegration.test.js`**: Dynamic layer switching, stale data prevention across unrecorded hours, route-selection preservation during slider scrubbing, and empty state resilience.
+- **`src/e2e/dispatchFlow.test.js`**: Complete end-to-end journey tests covering form submission, payload serialization, mock API fetch, geometry inversion, bounds calculation, checkpoint extraction, 0–48h timeline generation, 4-layer evaluation, HTTP 503 setup-pending state, HTTP 400 validation error mapping, and network failure diagnostics.
 
 ```bash
-# Run all frontend tests
+# Run all frontend tests (61 tests)
 cd frontend && npm test
 
 # Run linter
@@ -816,7 +817,7 @@ cd frontend && npm run lint
 # Run production build
 cd frontend && npm run build
 
-# Run backend regression tests
+# Run backend test suite (81 tests)
 cd backend && .venv/bin/python manage.py test
 ```
 
@@ -857,20 +858,38 @@ Operators can toggle between four dedicated weather overlay layers:
 
 ---
 
-## Current Status & Next Steps
+## Final End-to-End Integration & Quality Verification (Step 12)
 
-- **Completed**:
-  - Steps 1–3: DRF routing app, request/response serializers, input validation.
-  - Step 4: Mapbox Directions API integration with distance-based checkpoint sampling.
-  - Step 5: Open-Meteo weather forecast API integration with arrival-time weather sampling.
-  - Step 6: Multi-hazard weather risk engine with truck load elevation rules.
-  - Step 7: Lexicographic route recommendation and ranking engine.
-  - Step 8: React frontend UI dashboard prototype.
-  - Step 9: Frontend-backend API integration, error normalization, and distinct lifecycle states.
-  - Step 10: Interactive Leaflet map canvas, route polylines, checkpoint risk markers, popups, and route selector.
-  - Step 11: Weather heatmap corridor overlays, 4 weather layers, 0–48h forecast timeline slider, and dynamic legends.
-- **Deferred to Subsequent Steps**:
-  - Live external API credentials configuration.
+The complete application pipeline was verified through end-to-end integration and automated regression testing.
+
+### 1. Verified Complete Flow Trace
+- **Route Form**: Validates origin/destination inputs, ISO-8601 departure timestamp, gross load weight (0–80,000 lb), and sampling intervals (10, 25, 50 mi).
+- **Django REST API**: `POST /api/routes/` deserializes payload, converts units, validates constraints, and checks external provider readiness.
+- **Route Generation (`MapboxRoutingService`)**: Requests driving routes with alternative corridors and polyline geometries via Mapbox Directions.
+- **Checkpoint Sampling (`sample_checkpoints`)**: Samples checkpoints at exact distance intervals (10, 25, 50 miles), including origin and destination, calculating arrival times based on segment durations.
+- **Weather Retrieval (`OpenMeteoWeatherService`)**: Fetches hourly weather forecasts at each checkpoint for its specific estimated arrival time.
+- **Risk Scoring (`WeatherRiskScorer`)**: Evaluates wind speed, precipitation intensity, and snowfall against exact assignment thresholds, applying load-weight crosswind elevations. Missing weather is preserved as `unknown`, never zero/low risk.
+- **Route Recommendation (`RouteRecommender`)**: Ranks alternatives using lexicographic priority (1: Fewest Severe miles, 2: Fewest High miles, 3: Lowest average risk, 4: Shortest travel time). Flags `all_routes_unsafe` and blocks recommendations when all corridors encounter No Travel advisories.
+- **Frontend Dashboard (`App.jsx`)**: Renders loading skeletons, error alerts with troubleshooting guides, setup-pending banners when credentials are unconfigured, and result summaries.
+- **Interactive Map (`RouteMap.jsx`)**: Renders GeoJSON geometries inverted to `[lat, lon]`, dynamic viewport fitting, checkpoint risk pins, popups, and 4-layer weather corridor heatmaps.
+- **Timeline Slider (`ForecastTimeline.jsx`)**: Provides interactive 0–48h scrubbing with stale-data protection and animated playback.
+
+### 2. Quality Verification Summary
+
+| Suite / Check | Command | Result | Details |
+| :--- | :--- | :--- | :--- |
+| **Backend Tests** | `python manage.py test` | **81 Passed** (0 Failures) | Health, serializers, Mapbox service, Open-Meteo service, risk scoring, load rules, lexicographical ranking, No Travel flags, missing weather preservation. |
+| **Frontend Tests** | `npm test` | **61 Passed** (0 Failures) | API client, error mapping, coordinate transformations, map integration, layer thresholds, timeline slider, end-to-end dispatch flow. |
+| **Frontend Linter** | `npm run lint` | **0 Errors, 0 Warnings** | Oxlint verified 21 files. |
+| **Production Build** | `npm run build` | **Passed in 138ms** | Vite production bundle generated without errors or circular dependencies. |
+| **Live API Contracts** | `curl` against local daemons | **Verified** | Health endpoint `200 OK`, unconfigured provider returns clear `503 provider_not_configured`. |
+
+### 3. Limitations & Deployment Prerequisites
+
+- **Mapbox API Credentials**: In production, configure `MAPBOX_ACCESS_TOKEN` in `backend/.env`. Automated test suites do not require live credentials and use verified mock fixtures.
+- **Tile Usage Policy**: Leaflet uses OpenStreetMap public tiles by default. High-volume commercial deployments should configure `VITE_MAP_TILE_URL` to a dedicated tile provider (e.g. Mapbox, Stadia Maps) per OSM Tile Usage Policy.
+- **Weather Sampling Resolution**: Open-Meteo provides hourly forecast models. Corridor heatmaps represent sampled checkpoint intervals (10, 25, 50 miles) rather than live radar reflectivity sweeps.
+- **Browser Automation Note**: Browser automation in the local sandbox is offline (Playwright binaries cannot be fetched). All UI rendering, state transitions, and integration journeys are verified through automated unit, integration, and E2E Node test suites.
 
 
 
