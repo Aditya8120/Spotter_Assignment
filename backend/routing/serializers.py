@@ -214,6 +214,7 @@ class CheckpointSerializer(serializers.Serializer):
     longitude = serializers.FloatField()
     estimated_arrival = serializers.DateTimeField(allow_null=True, required=False)
     distance_from_origin_miles = serializers.FloatField(allow_null=True, required=False)
+    distance_from_origin_km = serializers.FloatField(allow_null=True, required=False)
     duration_from_origin_seconds = serializers.IntegerField(allow_null=True, required=False)
     weather = WeatherObservationSerializer(allow_null=True, required=False)
     risk_level = serializers.ChoiceField(
@@ -251,13 +252,16 @@ class RouteOptionSerializer(serializers.Serializer):
     """Representation of an individual route option (up to 3 per response)."""
     route_id = serializers.CharField()
     display_name = serializers.CharField()
-    distance_miles = serializers.FloatField(allow_null=True)
+    distance_miles = serializers.FloatField(allow_null=True, required=False)
+    distance_km = serializers.FloatField(allow_null=True, required=False)
     duration_seconds = serializers.IntegerField(allow_null=True)
     duration_formatted = serializers.CharField(allow_null=True, required=False)
+    geometry = serializers.DictField(allow_null=True, required=False)
     checkpoints = CheckpointSerializer(many=True, default=list)
     weather_summary = serializers.DictField(allow_null=True, required=False)
     risk_assessment = RiskAssessmentSerializer(allow_null=True, required=False)
     recommendation = RouteRecommendationSerializer()
+
 
 
 class RequestSummarySerializer(serializers.Serializer):

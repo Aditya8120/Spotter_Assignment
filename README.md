@@ -15,7 +15,7 @@ A full-stack application for weather-aware truck routing featuring a Django REST
 │   ├── .venv/              # Python virtual environment (ignored by git)
 │   ├── backend/            # Django project configuration (settings.py, urls.py)
 │   ├── routing/            # Django app for routing & weather awareness
-│   │   ├── services/       # Modular engine stubs (routing, weather, risk scoring)
+│   │   ├── services/       # Modular services (Mapbox provider, weather, risk scoring)
 │   │   ├── serializers.py  # Request & response validation serializers
 │   │   ├── views.py        # API views (health check, route planning)
 │   │   ├── urls.py         # App URL routing
@@ -58,6 +58,18 @@ The supported environment variables and their default development values:
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Comma-separated list of allowed hostnames. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated origins allowed for cross-origin frontend requests. |
 | `DJANGO_DB_NAME` | `db.sqlite3` | SQLite database file name located under `backend/`. |
+| `MAPBOX_ACCESS_TOKEN` | *(none)* | Mapbox public/secret token for Directions & Geocoding APIs. |
+
+### Mapbox Account & Token Setup
+
+1. Sign up for a free Mapbox account at [mapbox.com](https://www.mapbox.com/).
+2. Navigate to your Mapbox Account Dashboard and copy your default public token (starts with `pk.`).
+3. Add the token to your local `.env` file:
+   ```bash
+   MAPBOX_ACCESS_TOKEN=pk.your_actual_token_here
+   ```
+4. Never commit `.env` or share this token publicly. Automated tests use mocked HTTP responses and do not require a real token.
+
 
 ---
 
@@ -146,7 +158,7 @@ python manage.py test
 
 - **Method**: `POST`
 - **Path**: `/api/routes/`
-- **Description**: Validates route request parameters and returns a structured placeholder response until routing and weather services are integrated.
+- **Description**: Validates route request parameters, resolves locations (via Mapbox Geocoding if text), and obtains real driving routes via the Mapbox Directions API (`v5/mapbox/driving`).
 
 #### Request Schema
 
@@ -158,27 +170,34 @@ python manage.py test
 | `load_weight_lb` | Float | **Yes** | Truck cargo load weight in pounds (> 0). | `35000.0` |
 
 ##### Supported Location Formats for `origin` and `destination`:
-1. **Text Query**: `"Chicago, IL"` or `"123 Main St, Springfield"`
+1. **Text Query**: `"Chicago, IL"` or `"123 Main St, Springfield"` (geocoded automatically via Mapbox Geocoding)
 2. **Coordinate Object**: `{"latitude": 41.8781, "longitude": -87.6298}` (also accepts keys `lat` and `lon`/`lng`)
 3. **Coordinate String**: `"41.8781, -87.6298"`
 4. **Coordinate Array**: `[41.8781, -87.6298]`
 
-#### Validation Rules & HTTP 400 Responses
+#### Validation Rules & Error Responses
 
-- **Missing Location**: Returns `400 Bad Request` if `origin` or `destination` is absent, `null`, or blank.
-- **Invalid Coordinates**: Returns `400 Bad Request` if latitude is not between `[-90, 90]` or longitude is not between `[-180, 180]`.
-- **Invalid Date/Time**: Returns `400 Bad Request` if `departure_datetime` is missing, `null`, or not a valid ISO 8601 string.
-- **Non-Positive Load Weight**: Returns `400 Bad Request` if `load_weight_lb` is `<= 0`, non-numeric, or missing.
-- **Identical Locations**: Returns `400 Bad Request` if origin and destination resolve to the same location.
+| Status Code | Code | Reason |
+| :--- | :--- | :--- |
+| `400 Bad Request` | `validation_error` | Missing required fields, non-positive `load_weight_lb`, invalid ISO datetime, out-of-range coordinates, or identical origin/destination. |
+| `400 Bad Request` | `geocoding_failed` | Location text query could not be resolved to valid geographic coordinates. |
+| `404 Not Found` | `no_route_found` | No drivable route found between coordinates (e.g. islands or unnavigable terrain). |
+| `429 Too Many Requests` | `rate_limit_exceeded` | Upstream Mapbox API rate limit reached. |
+| `502 Bad Gateway` | `provider_auth_error` / `provider_connection_error` | Mapbox token rejected or network failure connecting to provider. |
+| `503 Service Unavailable` | `provider_not_configured` | Server environment is missing `MAPBOX_ACCESS_TOKEN`. |
+| `504 Gateway Timeout` | `provider_timeout` | Request to Mapbox timed out. |
 
-#### Response Schema
+#### Response Schema & Units
 
-The response is designed to return up to three candidate route options with structured checkpoints, weather, and risk assessments:
+- **Distance**: Represented in kilometers (`distance_km`) and miles (`distance_miles`).
+- **Duration**: Represented in integer seconds (`duration_seconds`) and formatted display string (`duration_formatted`, e.g. `"14h 20m"`).
+- **Geometry**: GeoJSON `LineString` with coordinate pairs `[[longitude, latitude], ...]`.
+- **Alternatives**: Requests alternatives where supported, returning up to three distinct routes when provided. Does not fabricate extra alternatives if fewer are returned.
 
 ```json
 {
-  "status": "not_implemented",
-  "message": "Route planning request validated successfully. Routing engine, weather data integration, and hazard risk scoring are pending in future steps.",
+  "status": "planned",
+  "message": "Routes successfully calculated via Mapbox Directions API. Note: Routes reflect standard driving directions and do not yet account for truck restrictions (height/weight limits), weather hazards, or road closures.",
   "request_summary": {
     "origin": "Chicago, IL",
     "destination": "Dallas, TX",
@@ -187,49 +206,59 @@ The response is designed to return up to three candidate route options with stru
   },
   "routes": [
     {
-      "route_id": "route-primary-id",
-      "display_name": "Route Display Name",
-      "distance_miles": 925.4,
-      "duration_seconds": 51600,
-      "duration_formatted": "14h 20m",
+      "route_id": "mapbox-route-1",
+      "display_name": "Primary Route (via I-55 S, I-30 W)",
+      "distance_km": 1488.5,
+      "distance_miles": 924.9,
+      "duration_seconds": 50400,
+      "duration_formatted": "14h 0m",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-87.6298, 41.8781],
+          [-90.1994, 38.6270],
+          [-96.7970, 32.7767]
+        ]
+      },
       "checkpoints": [
         {
           "sequence": 1,
-          "name": "Waypoint Name",
+          "name": "Departure: Chicago, IL",
           "latitude": 41.8781,
           "longitude": -87.6298,
           "estimated_arrival": "2026-10-30T08:00:00Z",
+          "distance_from_origin_km": 0.0,
           "distance_from_origin_miles": 0.0,
           "duration_from_origin_seconds": 0,
-          "weather": {
-            "temperature": 45.0,
-            "condition": "Clear",
-            "wind_speed_mph": 12.0,
-            "wind_gust_mph": 18.0,
-            "precipitation_probability": 10.0,
-            "visibility_miles": 10.0,
-            "units": {
-              "temperature": "°F",
-              "wind_speed": "mph",
-              "precipitation": "%",
-              "visibility": "miles"
-            }
-          },
-          "risk_level": "low",
-          "risk_summary": "Safe conditions."
+          "weather": null,
+          "risk_level": "unknown",
+          "risk_summary": null
+        },
+        {
+          "sequence": 2,
+          "name": "Arrival: Dallas, TX",
+          "latitude": 32.7767,
+          "longitude": -96.7970,
+          "estimated_arrival": "2026-10-30T22:00:00Z",
+          "distance_from_origin_km": 1488.5,
+          "distance_from_origin_miles": 924.9,
+          "duration_from_origin_seconds": 50400,
+          "weather": null,
+          "risk_level": "unknown",
+          "risk_summary": null
         }
       ],
       "weather_summary": {},
       "risk_assessment": {
-        "overall_risk_level": "low",
-        "risk_score": 15.0,
+        "overall_risk_level": "unknown",
+        "risk_score": null,
         "risk_factors": [],
-        "summary": "Favorable route conditions."
+        "summary": "Weather hazard risk scoring is not yet integrated."
       },
       "recommendation": {
         "is_recommended": true,
         "status": "recommended",
-        "explanation": "Safest route with minimal weather risks."
+        "explanation": "Primary route recommended by Mapbox based on shortest duration and road classification. Note: Reflects standard passenger driving profile; truck height/weight limits and weather conditions are not yet accounted for."
       }
     }
   ]
@@ -269,9 +298,11 @@ Response (`400 Bad Request`):
 }
 ```
 
-#### Current Limitations
-- **Route Calculation**: Third-party routing providers (e.g. OSRM, OpenRouteService) are not yet integrated. The endpoint returns `status: "not_implemented"` with an empty `routes: []` array.
-- **Weather & Risk Engine**: Weather provider (Open-Meteo) and truck risk scoring engines are organized as modular service stubs under `backend/routing/services/` for subsequent implementation steps.
+#### Provider Limitations & Road Routing Notice
+> [!IMPORTANT]
+> **Passenger Car Routing Only**: Routes are currently retrieved using the Mapbox `driving` profile. They **do not** account for commercial truck restrictions, including bridge weight limits, low clearances, truck-prohibited parkways, hazardous cargo restrictions, or road closures.
+> **Weather Integration Pending**: Checkpoint weather observations and weather risk scoring are modular stubs under `backend/routing/services/` awaiting subsequent implementation steps.
+
 
 
 ---
