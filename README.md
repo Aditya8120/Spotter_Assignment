@@ -799,10 +799,12 @@ The dashboard includes a fully interactive, responsive map canvas powered by **L
 
 ### 6. Automated Testing
 
-The frontend automated test suite includes **38 tests** across 13 suites:
+The frontend automated test suite includes **57 tests** across 21 suites:
 - **`src/services/api.test.js`**: Payload construction, HTTP responses, error normalization, and health checks.
 - **`src/utils/mapUtils.test.js`**: Coordinate validation, GeoJSON coordinate transformation, bounding box calculation, risk level metadata mapping, route polyline styles, and checkpoint extraction.
 - **`src/utils/mapIntegration.test.js`**: Route selection state transitions, multi-segment corridor rendering with mocked data, checkpoint risk marker classifications, missing geometry handling, and empty result safety.
+- **`src/utils/weatherLayers.test.js`**: Wind/precipitation/snowfall threshold evaluations, load-weight elevations, 0–48h timeline generation, timestamp matching, and layer value extraction.
+- **`src/utils/weatherLayersIntegration.test.js`**: Dynamic layer switching, stale data prevention across unrecorded hours, route-selection preservation during slider scrubbing, and empty state resilience.
 
 ```bash
 # Run all frontend tests
@@ -820,6 +822,41 @@ cd backend && .venv/bin/python manage.py test
 
 ---
 
+## Weather Heatmap & 0–48h Forecast Timeline (Step 11)
+
+The interactive map includes an honest, corridor-following weather heatmap overlay and a dynamic **0–48-hour forecast timeline slider**.
+
+### 1. Supported Weather Layers
+
+Operators can toggle between four dedicated weather overlay layers:
+- 🛡️ **Overall Risk**: Composite hazard evaluation governed by the most severe condition and vehicle load weight.
+- 💨 **Wind Speed (`mph`)**: Sustained winds and gusts evaluated against commercial tip-over thresholds:
+  - Low (<25 mph), Moderate (25–34 mph), High (35–44 mph), Severe (45–54 mph), No Travel (≥55 mph).
+  - Elevates to No Travel at 45–54 mph when load weight exceeds 30,000 lb.
+  - Elevates to Severe at 35–44 mph when load weight exceeds 40,000 lb.
+- 🌧️ **Precipitation (`in/h`)**: 1-hour rainfall rate and hydroplaning risk:
+  - Low (<0.10 in/h), Moderate (0.10–0.25 in/h), High (>0.25–0.50 in/h), Severe (>0.50 in/h).
+- ❄️ **Snowfall (`in/h`)**: Snow accumulation rate and whiteout hazard:
+  - Low (<0.50 in/h), Moderate (0.50–1.00 in/h), High (>1.00–2.00 in/h), Severe (>2.00–3.00 in/h), No Travel (>3.00 in/h).
+
+### 2. Forecast Timeline Slider (0 to 48 Hours)
+
+- **49 Hourly Horizons**: Covers `T+0h` (Departure) through `T+48h` relative to the scheduled departure datetime.
+- **Horizon Readout**: Clearly displays the active horizon (e.g. `T+6h • Friday, Oct 30 at 14:00 UTC`).
+- **Interactive Controls**: Scrub slider, `-1h` / `+1h` step buttons, quick jump buttons (`T+0h`, `+6h`, `+12h`, `+24h`, `+48h`), and automated playback animation (`▶ Play` / `⏸ Pause`).
+- **Data Availability Rules**:
+  - The slider checks whether forecast data is recorded for each horizon slot.
+  - **No Stale Data Reuse**: Observations sampled at checkpoint arrival times are never reused for a different timestamp without explicit identification. When an unrecorded hour is selected, checkpoints display an Unknown marker with an explanatory message: *"Forecast observation not recorded for T+Xh (Sampled at scheduled arrival)"*.
+  - When matching hourly data is available, checkpoints update their values and colors in real time.
+
+### 3. Corridor Heatmap Overlay & Data Integrity
+
+- **Route Corridor Geometry**: Renders a glowing heatmap underlay along the polyline coordinates of the selected route, accompanied by semi-transparent influence discs around each checkpoint.
+- **Honest Approximation**: Because weather data is sampled at discrete checkpoint intervals (10, 25, or 50 miles) rather than continuous radar reflectivity, the map displays an explicit watermark: *"Corridor Heatmap Approximation (Sampled Checkpoints; Not Radar Reflectivity)"*.
+- **Route Selection Preservation**: Scrubbing the timeline or switching weather layers never resets or alters the selected route ID or card selection in the results panel.
+
+---
+
 ## Current Status & Next Steps
 
 - **Completed**:
@@ -831,9 +868,10 @@ cd backend && .venv/bin/python manage.py test
   - Step 8: React frontend UI dashboard prototype.
   - Step 9: Frontend-backend API integration, error normalization, and distinct lifecycle states.
   - Step 10: Interactive Leaflet map canvas, route polylines, checkpoint risk markers, popups, and route selector.
+  - Step 11: Weather heatmap corridor overlays, 4 weather layers, 0–48h forecast timeline slider, and dynamic legends.
 - **Deferred to Subsequent Steps**:
-  - Interactive weather radar/heatmap overlays and forecast departure slider.
-  - Live Mapbox API credentials configuration.
+  - Live external API credentials configuration.
+
 
 
 

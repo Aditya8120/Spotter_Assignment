@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, Polyline, Marker, Popup, Tooltip, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, Popup, Tooltip, Circle, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import {
   DEFAULT_MAP_CENTER,
@@ -8,12 +8,19 @@ import {
   DEFAULT_TILE_ATTRIBUTION,
   parseRouteGeometry,
   getBoundsFromCoordinates,
-  getRiskMeta,
   getRouteStyle,
   extractRouteCheckpoints,
   isValidCoordinate,
-  RISK_LEVEL_META,
 } from '../utils/mapUtils'
+import {
+  WEATHER_LAYERS,
+  LAYER_COLOR_SCALES,
+  generateForecastTimeline,
+  getCheckpointLayerValue,
+  matchCheckpointWeatherForTimestamp,
+} from '../utils/weatherLayers'
+import { WeatherLayerSelector } from './WeatherLayerSelector'
+import { ForecastTimelineSlider } from './ForecastTimelineSlider'
 
 // Configure Leaflet default image fallback in bundlers
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -52,8 +59,7 @@ function MapBoundsController({ bounds }) {
 }
 
 /**
- * Helper to build custom HTML DivIcons for Departure Origin, Final Destination, and Checkpoints.
- * Avoids broken PNG paths and provides accessible SVG/CSS styling with high contrast.
+ * Helper to build custom HTML DivIcons for Departure Origin and Final Destination endpoints.
  */
 function createEndpointIcon(type = 'origin', label = 'A') {
   const isOrigin = type === 'origin'
@@ -89,15 +95,25 @@ function createEndpointIcon(type = 'origin', label = 'A') {
   })
 }
 
-function createCheckpointIcon(sequence, riskLevel = 'unknown') {
-  const meta = getRiskMeta(riskLevel)
-  const isSevereOrNoTravel = riskLevel === 'severe' || riskLevel === 'no_travel'
+/**
+ * Creates dynamic checkpoint markers whose badge reflects the active weather layer's color.
+ */
+function createWeatherCheckpointIcon(sequence, layerMeta, layerKey) {
+  const isSevereOrNoTravel = layerMeta.category === 'severe' || layerMeta.category === 'no_travel'
+  const isUnknown = layerMeta.category === 'unknown'
+
+  let glyph = sequence
+  if (isSevereOrNoTravel) {
+    glyph = '!'
+  } else if (isUnknown) {
+    glyph = '?'
+  }
 
   const html = `
-    <div class="custom-checkpoint-pin risk-${meta.key}" style="
-      background-color: ${meta.color};
-      border: 2px solid ${meta.borderColor};
-      color: ${meta.textColor};
+    <div class="custom-checkpoint-pin layer-${layerKey} cat-${layerMeta.category}" style="
+      background-color: ${layerMeta.color};
+      border: 2px solid ${layerMeta.color === '#64748b' ? '#334155' : '#ffffff'};
+      color: #ffffff;
       width: ${isSevereOrNoTravel ? '26px' : '22px'};
       height: ${isSevereOrNoTravel ? '26px' : '22px'};
       border-radius: 50%;
@@ -107,8 +123,8 @@ function createCheckpointIcon(sequence, riskLevel = 'unknown') {
       box-shadow: 0 2px 8px rgba(0,0,0,0.45);
       font-weight: 800;
       font-size: ${isSevereOrNoTravel ? '12px' : '10.5px'};
-    " title="Checkpoint #${sequence} (${meta.label})">
-      <span>${isSevereOrNoTravel ? '!' : sequence}</span>
+    " title="Checkpoint #${sequence} (${layerMeta.label})">
+      <span>${glyph}</span>
     </div>
   `
 
@@ -132,6 +148,8 @@ export function InteractiveMap({
   queryParams = {},
 }) {
   const [showLegend, setShowLegend] = useState(true)
+  const [activeWeatherLayer, setActiveWeatherLayer] = useState('risk')
+  const [selectedHourOffset, setSelectedHourOffset] = useState(0)
 
   // Find currently selected route or default to first/recommended
   const activeRoute = useMemo(() => {
@@ -163,17 +181,15 @@ export function InteractiveMap({
     })
   }, [routes, activeRoute])
 
-  // Compute active bounds across all valid coordinates of the selected route (or all routes)
+  // Compute active bounds across all valid coordinates of the selected route
   const mapBounds = useMemo(() => {
     if (!activeRoute) return null
 
-    // Prefer coordinates from selected route's geometry
     const activeGeo = routeGeometries.find((g) => g.routeId === activeRoute.route_id)
     if (activeGeo && activeGeo.hasGeometry) {
       return getBoundsFromCoordinates(activeGeo.latLngs)
     }
 
-    // Fall back to checkpoint coordinates if geometry is absent
     const checkpoints = extractRouteCheckpoints(activeRoute)
     if (checkpoints.length >= 2) {
       const cpPoints = checkpoints.map((cp) => [cp.latitude, cp.longitude])
@@ -195,15 +211,58 @@ export function InteractiveMap({
     return !match || !match.hasGeometry
   }, [activeRoute, routeGeometries])
 
-  // Origin & Destination endpoints from checkpoints
+  // Generate 0–48h forecast timeline slots relative to departure datetime
+  const timelineSlots = useMemo(() => {
+    const baseDt = queryParams?.departureDatetime || activeCheckpoints[0]?.estimated_arrival
+    return generateForecastTimeline(baseDt, 48)
+  }, [queryParams?.departureDatetime, activeCheckpoints])
+
+  const activeSlot = timelineSlots[selectedHourOffset] || timelineSlots[0]
+
+  // Check data availability for the currently selected hour across checkpoints
+  const { isSlotAvailable, availabilityMessage } = useMemo(() => {
+    if (!activeCheckpoints || activeCheckpoints.length === 0) {
+      return { isSlotAvailable: false, availabilityMessage: 'No route checkpoints available.' }
+    }
+
+    if (!activeSlot?.isoTimestamp) {
+      return { isSlotAvailable: false, availabilityMessage: 'Invalid timeline slot.' }
+    }
+
+    // Check if at least one checkpoint has valid forecast data for this timestamp
+    const availableCount = activeCheckpoints.filter((cp) => {
+      const match = matchCheckpointWeatherForTimestamp(cp, activeSlot.isoTimestamp)
+      return match.isAvailable
+    }).length
+
+    if (availableCount > 0) {
+      return {
+        isSlotAvailable: true,
+        availabilityMessage: `${availableCount} of ${activeCheckpoints.length} checkpoints have forecast data for this hour.`,
+      }
+    }
+
+    const firstArrival = activeCheckpoints[0]?.estimated_arrival
+    const arrivalText = firstArrival ? new Date(firstArrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'departure time'
+    return {
+      isSlotAvailable: false,
+      availabilityMessage: `Forecast observation not recorded for ${activeSlot.label}. Route checkpoints have weather sampled at arrival (${arrivalText}).`,
+    }
+  }, [activeCheckpoints, activeSlot])
+
+  // Endpoints
   const originCheckpoint = activeCheckpoints.length > 0 ? activeCheckpoints[0] : null
   const destinationCheckpoint =
     activeCheckpoints.length > 1 ? activeCheckpoints[activeCheckpoints.length - 1] : null
   const intermediateCheckpoints =
     activeCheckpoints.length > 2 ? activeCheckpoints.slice(1, activeCheckpoints.length - 1) : []
 
+  // Dynamic color scale for active weather layer
+  const currentScale = LAYER_COLOR_SCALES[activeWeatherLayer] || LAYER_COLOR_SCALES.risk
+  const activeLayerMeta = WEATHER_LAYERS[activeWeatherLayer] || WEATHER_LAYERS.risk
+
   return (
-    <div className="card map-card" role="region" aria-label="Interactive Route Map and Weather Hazard Overlay">
+    <div className="card map-card" role="region" aria-label="Interactive Route Map and Weather Hazard Heatmap">
       {/* 1. Map Header & Route Selector Tabs */}
       <div className="map-card-header">
         <div className="map-header-left">
@@ -215,7 +274,7 @@ export function InteractiveMap({
           <span className="map-title">Route Geometry &amp; Weather Hazard Overlay</span>
         </div>
 
-        {/* Route Selector Tab Bar (When routes are available) */}
+        {/* Route Selector Tab Bar */}
         {routes.length > 0 && (
           <div className="map-route-selector-tabs" role="tablist" aria-label="Select Route Option">
             {routes.map((route, idx) => {
@@ -253,19 +312,34 @@ export function InteractiveMap({
         </div>
       </div>
 
-      {/* 2. Map Canvas Area */}
+      {/* 2. Weather Layer Selector Bar */}
+      <WeatherLayerSelector
+        activeLayer={activeWeatherLayer}
+        onSelectLayer={setActiveWeatherLayer}
+      />
+
+      {/* 3. Forecast Timeline Slider (0–48 Hours) */}
+      <ForecastTimelineSlider
+        slots={timelineSlots}
+        selectedHour={selectedHourOffset}
+        onSelectHour={setSelectedHourOffset}
+        isSlotAvailable={isSlotAvailable}
+        availabilityMessage={availabilityMessage}
+      />
+
+      {/* 4. Map Canvas Area */}
       <div className="map-viewport-wrapper">
         <MapContainer
           center={DEFAULT_MAP_CENTER}
           zoom={DEFAULT_MAP_ZOOM}
           scrollWheelZoom={true}
           className="leaflet-map-canvas"
-          aria-label="Interactive route navigation map"
+          aria-label="Interactive route navigation and weather heatmap map"
         >
           {/* Dynamic Viewport Controller */}
           {mapBounds && <MapBoundsController bounds={mapBounds} />}
 
-          {/* OpenStreetMap Tile Layer (OSM Fair-Use Compliant) */}
+          {/* OpenStreetMap Tile Layer */}
           <TileLayer
             attribution={DEFAULT_TILE_ATTRIBUTION}
             url={DEFAULT_TILE_URL}
@@ -287,7 +361,7 @@ export function InteractiveMap({
                 <Tooltip sticky>
                   <strong>{geom.displayName}</strong> (Alternative #{geom.rank})
                   <br />
-                  Click to select and view weather checkpoints
+                  Click to select corridor and inspect weather
                 </Tooltip>
               </Polyline>
             ))}
@@ -296,18 +370,57 @@ export function InteractiveMap({
           {routeGeometries
             .filter((g) => g.hasGeometry && g.routeId === activeRoute?.route_id)
             .map((geom, idx) => (
-              <Polyline
-                key={`active-poly-${geom.routeId}-${idx}`}
-                positions={geom.latLngs}
-                pathOptions={geom.style}
-              >
-                <Tooltip sticky>
-                  <strong>{geom.displayName}</strong> {geom.isRecommended ? '★ Recommended' : ''}
-                  <br />
-                  Distance: {geom.route?.distance_miles?.toFixed(1)} mi • Drive Time: {geom.route?.duration_formatted}
-                </Tooltip>
-              </Polyline>
+              <React.Fragment key={`active-group-${geom.routeId}-${idx}`}>
+                {/* Glow heatmap layer underlay following the corridor */}
+                <Polyline
+                  positions={geom.latLngs}
+                  pathOptions={{
+                    color: isSlotAvailable ? '#3b82f6' : '#64748b',
+                    weight: 12,
+                    opacity: 0.3,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }}
+                />
+                {/* Sharp polyline stroke on top */}
+                <Polyline
+                  positions={geom.latLngs}
+                  pathOptions={geom.style}
+                >
+                  <Tooltip sticky>
+                    <strong>{geom.displayName}</strong> {geom.isRecommended ? '★ Recommended' : ''}
+                    <br />
+                    Distance: {geom.route?.distance_miles?.toFixed(1)} mi • Drive Time: {geom.route?.duration_formatted}
+                    <br />
+                    Layer: <strong>{activeLayerMeta.label}</strong> at {activeSlot.label}
+                  </Tooltip>
+                </Polyline>
+              </React.Fragment>
             ))}
+
+          {/* Heatmap Influence Halos around each checkpoint */}
+          {activeCheckpoints.map((cp) => {
+            const layerVal = getCheckpointLayerValue(
+              cp,
+              activeWeatherLayer,
+              activeSlot.isoTimestamp,
+              queryParams?.loadWeightLb
+            )
+            return (
+              <Circle
+                key={`halo-${cp.sequence}-${cp.latitude}-${cp.longitude}`}
+                center={[cp.latitude, cp.longitude]}
+                radius={32000} // ~20 miles radius representing sampled segment influence
+                pathOptions={{
+                  fillColor: layerVal.color,
+                  fillOpacity: layerVal.isAvailable ? 0.28 : 0.08,
+                  color: layerVal.color,
+                  weight: 1,
+                  opacity: layerVal.isAvailable ? 0.6 : 0.2,
+                }}
+              />
+            )
+          })}
 
           {/* Origin Marker (Point A) */}
           {originCheckpoint && isValidCoordinate(originCheckpoint.latitude, originCheckpoint.longitude) && (
@@ -360,15 +473,20 @@ export function InteractiveMap({
             </Marker>
           )}
 
-          {/* Intermediate Checkpoint Risk Markers for Selected Route */}
+          {/* Intermediate Checkpoints styled according to active weather layer */}
           {intermediateCheckpoints.map((cp) => {
-            const riskMeta = getRiskMeta(cp.risk_level)
+            const layerVal = getCheckpointLayerValue(
+              cp,
+              activeWeatherLayer,
+              activeSlot.isoTimestamp,
+              queryParams?.loadWeightLb
+            )
             const weather = cp.weather
             return (
               <Marker
-                key={`cp-${cp.sequence}-${cp.latitude}-${cp.longitude}`}
+                key={`cp-${cp.sequence}-${cp.latitude}-${cp.longitude}-${activeWeatherLayer}-${selectedHourOffset}`}
                 position={[cp.latitude, cp.longitude]}
-                icon={createCheckpointIcon(cp.sequence, cp.risk_level)}
+                icon={createWeatherCheckpointIcon(cp.sequence, layerVal, activeWeatherLayer)}
               >
                 <Popup className="map-custom-popup">
                   <div className="popup-content">
@@ -376,13 +494,19 @@ export function InteractiveMap({
                       <span className="cp-seq-badge">#{cp.sequence}</span>
                       <span
                         className="popup-risk-badge"
-                        style={{ backgroundColor: riskMeta.color, color: riskMeta.textColor }}
+                        style={{ backgroundColor: layerVal.color, color: '#ffffff' }}
                       >
-                        {riskMeta.icon} {riskMeta.label}
+                        {layerVal.label}
                       </span>
                     </div>
 
                     <h4 className="popup-title">{cp.name || `Waypoint #${cp.sequence}`}</h4>
+
+                    {/* Active Layer Readout */}
+                    <div className="popup-layer-highlight" style={{ borderColor: layerVal.color }}>
+                      <span className="highlight-label">{activeLayerMeta.label}:</span>
+                      <strong className="highlight-val">{layerVal.displayValue}</strong>
+                    </div>
 
                     <div className="popup-metrics-grid">
                       <div className="popup-metric">
@@ -424,9 +548,9 @@ export function InteractiveMap({
                       )}
                     </div>
 
-                    {cp.risk_summary && (
-                      <div className="popup-risk-summary">
-                        <strong>Hazard Factor:</strong> {cp.risk_summary}
+                    {layerVal.reason && (
+                      <div className="popup-layer-notice">
+                        <span>ℹ️ {layerVal.reason}</span>
                       </div>
                     )}
                   </div>
@@ -436,16 +560,24 @@ export function InteractiveMap({
           })}
         </MapContainer>
 
-        {/* 3. Floating Overlay States */}
+        {/* 5. Honest Approximation Watermark / Notice */}
+        {routes.length > 0 && (
+          <div className="map-approximation-badge" title="Data Integrity Notice">
+            <span className="approx-dot"></span>
+            <span>Corridor Heatmap Approximation (Sampled Checkpoints; Not Radar Reflectivity)</span>
+          </div>
+        )}
 
-        {/* A. Initial State (Before user submission) */}
+        {/* 6. Floating Overlay States */}
+
+        {/* A. Initial Ready State */}
         {!hasSearched && !isLoading && (
           <div className="map-overlay-banner ready-overlay" role="status">
             <div className="overlay-content">
               <span className="overlay-icon">🗺️</span>
               <div>
-                <strong>Interactive Map Ready</strong>
-                <p>Enter dispatch origin, destination, schedule, and truck load weight to plot driving alternatives and weather risk checkpoints.</p>
+                <strong>Interactive Weather Map Ready</strong>
+                <p>Enter dispatch parameters to calculate route options, inspect multi-hazard weather overlays, and scrub 0–48h forecasts.</p>
               </div>
             </div>
           </div>
@@ -471,7 +603,7 @@ export function InteractiveMap({
               <span className="overlay-icon">⚙️</span>
               <div>
                 <strong>Live Routing Setup Pending</strong>
-                <p>Add <code>MAPBOX_ACCESS_TOKEN</code> to <code>backend/.env</code> to render real driving alternatives.</p>
+                <p>Add <code>MAPBOX_ACCESS_TOKEN</code> to <code>backend/.env</code> to render real driving alternatives and weather overlays.</p>
               </div>
             </div>
           </div>
@@ -484,7 +616,7 @@ export function InteractiveMap({
               <span className="overlay-icon">⚠️</span>
               <div>
                 <strong>Route Geometry Unavailable</strong>
-                <p>The backend returned route metrics, but polyline geometry was not included. Showing available coordinate checkpoints without connecting lines.</p>
+                <p>The backend returned route metrics, but polyline geometry was not included. Showing checkpoint weather markers without connecting lines.</p>
               </div>
             </div>
           </div>
@@ -503,11 +635,14 @@ export function InteractiveMap({
           </div>
         )}
 
-        {/* 4. Risk Level Legend Overlay */}
+        {/* 7. Dynamic Weather Layer Legend Panel */}
         {showLegend && (
-          <div className="map-risk-legend-panel" role="region" aria-label="Weather Hazard Risk Legend">
+          <div className="map-risk-legend-panel" role="region" aria-label={`Weather Hazard Legend: ${activeLayerMeta.label}`}>
             <div className="legend-header">
-              <span className="legend-title">Weather Risk Thresholds</span>
+              <div className="legend-title-group">
+                <span className="legend-title">{activeLayerMeta.icon} {activeLayerMeta.label}</span>
+                <span className="legend-unit-tag">{activeLayerMeta.unit}</span>
+              </div>
               <button
                 type="button"
                 className="btn-legend-close"
@@ -517,16 +652,17 @@ export function InteractiveMap({
                 &times;
               </button>
             </div>
+            <p className="legend-layer-desc">{activeLayerMeta.description}</p>
             <div className="legend-items">
-              {Object.values(RISK_LEVEL_META).map((meta) => (
-                <div key={meta.key} className="legend-row">
+              {Object.entries(currentScale).map(([catKey, meta]) => (
+                <div key={catKey} className="legend-row">
                   <span
                     className="legend-color-dot"
-                    style={{ backgroundColor: meta.color, borderColor: meta.borderColor }}
+                    style={{ backgroundColor: meta.color, borderColor: meta.color }}
                   ></span>
                   <div className="legend-text">
                     <span className="legend-label">{meta.label}</span>
-                    <span className="legend-desc">{meta.description}</span>
+                    <span className="legend-desc">{meta.threshold}</span>
                   </div>
                 </div>
               ))}
