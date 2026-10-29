@@ -651,23 +651,76 @@ To run recommendation tests specifically:
 
 ## Frontend Setup (React + Vite)
 
-### 1. Navigate to the frontend directory
+The frontend is an enterprise logistics dispatch dashboard built with **React 19** and **Vite 8**, styled with custom **Vanilla CSS** design tokens and responsive grid layouts.
+
+### 1. Component Structure
+
+```text
+frontend/src/
+├── components/
+│   ├── Header.jsx                 # Top bar with branding, system status, and reset
+│   ├── RouteForm.jsx              # Form with origin, destination, schedule, weight tiers, presets, and validation
+│   ├── MapPlaceholder.jsx         # Dedicated Mapbox canvas placeholder with Step 9 integration notices
+│   ├── RouteCard.jsx              # Reusable route alternative card with risk metrics and recommendation explanation
+│   ├── RouteResults.jsx           # Results container managing empty states and route card grid
+│   └── RiskThresholdReference.jsx # Collapsible logistics reference drawer with hazard thresholds and load rules
+├── App.jsx                        # Main logistics dashboard layout coordinating state
+├── App.css                        # Dashboard styles, grid, cards, badges, and responsive breakpoints
+├── index.css                      # Base design tokens, resets, typography (Inter + JetBrains Mono)
+└── main.jsx                       # Application entry point
+```
+
+### 2. UI Features & Operational Workflow
+
+- **Route Planning Form**:
+  - Origin and destination inputs (supporting city names or coordinates).
+  - Departure schedule picker (defaults to next morning 08:00 AM local).
+  - Load weight input with real-time tier classification (`Standard <= 30k lb`, `Heavy > 30k lb`, `Very Heavy > 40k lb`) and active load elevation rule notices.
+  - Checkpoint sampling interval selector (`10 mi`, `25 mi Default`, `50 mi`).
+  - One-click dispatch presets (e.g. *Chicago → Dallas*, *Denver → Salt Lake City*, *Seattle → Spokane*).
+- **Client-Side Form Validation**:
+  - Required field validation, date parseability check, and positive load weight bounds ($1$ to $250,000\text{ lb}$).
+  - Origin vs destination collision prevention.
+  - Inline error messages and highlighted input error states.
+- **Dedicated Map Canvas Placeholder**:
+  - Canvas with coordinate grid markings, compass rose, planned corridor indicator, and feature pills.
+  - Informative banner detailing the upcoming Mapbox GL JS vector lines, weather radar overlays, and interactive checkpoint popups.
+- **Evaluated Route Cards**:
+  - Displays up to 3 candidate routes with rank badges (`#1 Recommended`, `#2 Viable Alternative`, `#3 Not Recommended`).
+  - Metric breakdown: distance (mi/km), drive time, severe miles (Priority 1 metric), and average risk score.
+  - Multi-hazard mileage breakdown strip (Low, Moderate, High, Severe, No Travel).
+  - Human-readable recommendation explanation detailing hazard savings and travel time trade-offs.
+  - **Placeholder Notice**: Content is clearly labeled as demo/placeholder data representing the backend API response structure until live API communication is connected in Step 9.
+- **Collapsible Weather Hazard Reference Drawer**:
+  - Quick-reference table showing the exact wind, precipitation, and snowfall thresholds, plus truck weight elevation rules.
+- **Responsive Layout**:
+  - 2-column split desktop view (`420px` sidebar + flex main workspace).
+  - Stacked responsive view on tablet ($< 1100\text{px}$) and mobile ($< 768\text{px}$).
+
+### 3. Frontend Commands & Verification
+
+Navigate to the frontend directory:
 ```bash
 cd frontend
 ```
 
-### 2. Install dependencies
+Install dependencies:
 ```bash
 npm install
 ```
 
-### 3. Start the Vite development server
+Start the Vite development server:
 ```bash
 npm run dev
 ```
-The frontend application will be available at: `http://localhost:5173/`
+The dashboard will be available at `http://localhost:5173/`.
 
-### 4. Build for production (optional)
+Run linter checks:
+```bash
+npm run lint
+```
+
+Build production bundle:
 ```bash
 npm run build
 ```
@@ -676,9 +729,9 @@ npm run build
 
 ## Next Steps
 
-- Frontend user interface (route input form, origin/destination geocoding, vehicle configuration)
-- Interactive Mapbox GL JS map visualization with route alternatives and weather hazard overlays
-- Weather risk heatmap layers and checkpoint inspection popups
+- **Step 9**: Connect React frontend to Django backend API (`POST /api/routes/`), integrate Mapbox GL JS interactive map canvas, draw route alternative polylines, and render checkpoint weather inspection popups.
+- Interactive weather radar/heatmap layers and synchronized departure forecast slider.
+
 
 
 
