@@ -3,7 +3,7 @@
 .AppleDouble
 .LSOverride
 
-# Node
+# Node & Frontend
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -11,9 +11,18 @@ yarn-error.log*
 .pnpm-debug.log*
 dist/
 build/
+.vite/
+
+# Environment variables & secrets
 .env
-.env.local
-.env.*.local
+.env.*
+*.env
+!.env.example
+!**/.env.example
+
+# Logs & PID files
+*.log
+*.pid
 
 # Python
 __pycache__/
@@ -25,9 +34,20 @@ env/
 venv/
 ENV/
 .venv/
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Database
+*.sqlite3
+db.sqlite3
 
 # IDE & Editor
 .vscode/
 .idea/
 *.swp
 *.swo
+
