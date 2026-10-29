@@ -146,10 +146,12 @@ export function InteractiveMap({
   isPendingSetup = false,
   hasSearched = false,
   queryParams = {},
+  isDemo = false,
 }) {
   const [showLegend, setShowLegend] = useState(true)
   const [activeWeatherLayer, setActiveWeatherLayer] = useState('risk')
   const [selectedHourOffset, setSelectedHourOffset] = useState(0)
+  const isSimulatedMap = isDemo || routes.some((r) => r.route_id?.startsWith('demo_') || r.is_demo_data)
 
   // Find currently selected route or default to first/recommended
   const activeRoute = useMemo(() => {
@@ -299,6 +301,11 @@ export function InteractiveMap({
 
         {/* Header Right Actions */}
         <div className="map-badges">
+          {isSimulatedMap && (
+            <span className="badge badge-demo-indicator" title="Displaying simulated route coordinates and weather">
+              SIMULATED DATA
+            </span>
+          )}
           <button
             type="button"
             className="btn-legend-toggle"

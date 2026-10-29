@@ -38,6 +38,7 @@ env/
 venv/
 ENV/
 .venv/
+staticfiles/
 *.egg-info/
 .eggs/
 *.egg

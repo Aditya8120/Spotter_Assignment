@@ -12,6 +12,9 @@ export function RouteResults({
   queryParams = null,
   selectedRouteId: propSelectedRouteId,
   onSelectRoute,
+  isDemo = false,
+  onLoadDemo,
+  onExitDemo,
 }) {
   const [internalSelectedRouteId, setInternalSelectedRouteId] = useState(routes[0]?.route_id || null)
   const selectedRouteId = propSelectedRouteId !== undefined ? propSelectedRouteId : internalSelectedRouteId
@@ -69,6 +72,18 @@ export function RouteResults({
             <li>Restart the Django backend server: <code>python manage.py runserver</code>.</li>
           </ol>
         </div>
+        {onLoadDemo && (
+          <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={onLoadDemo}
+              title="Preview the interactive map and timeline using simulated corridor data"
+            >
+              Explore Demonstration Corridor (Simulated Data)
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -167,8 +182,34 @@ export function RouteResults({
     )
   }
 
+  const isSimulatedCorridor = isDemo || routes.some((r) => r.route_id?.startsWith('demo_') || r.is_demo_data)
+
   return (
     <section className="results-section" aria-labelledby="results-heading">
+      {/* Demonstration Data Warning Banner */}
+      {isSimulatedCorridor && (
+        <div className="demo-banner" role="status" aria-label="Simulated Demonstration Data Warning">
+          <span className="demo-banner-icon" aria-hidden="true" style={{ fontSize: '18px' }}>⚠️</span>
+          <div style={{ flex: 1 }}>
+            <strong>DEMONSTRATION PREVIEW (SIMULATED DATA):</strong>
+            <p style={{ margin: '3px 0 0 0', opacity: 0.9 }}>
+              The corridors, weather checkpoints, and risk metrics shown below are simulated demonstration data designed for offline visual inspection.
+              Live commercial dispatch requires a configured <code>MAPBOX_ACCESS_TOKEN</code> in the server environment.
+            </p>
+          </div>
+          {onExitDemo && (
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={onExitDemo}
+              title="Exit demonstration mode and return to live dispatch form"
+            >
+              Exit Demo
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Executive Summary Banner */}
       {recommendationSummary && (
         <div className={`recommendation-summary-card ${recommendationSummary.all_routes_unsafe ? 'all-unsafe' : 'has-recommendation'}`}>
@@ -206,6 +247,11 @@ export function RouteResults({
         <div>
           <h3 className="results-heading">
             Candidate Driving Routes ({routes.length} Available)
+            {isSimulatedCorridor && (
+              <span className="badge badge-demo-indicator" style={{ marginLeft: '10px' }}>
+                DEMO CORRIDOR
+              </span>
+            )}
           </h3>
           <p className="results-subheading">
             Corridor: <strong>{queryParams?.origin}</strong> &rarr; <strong>{queryParams?.destination}</strong> &bull; Truck Weight: <strong>{queryParams?.loadWeightLb?.toLocaleString()} lb</strong>
@@ -221,6 +267,7 @@ export function RouteResults({
             route={route}
             isSelected={selectedRouteId === route.route_id}
             onSelect={() => handleSelectRoute(route.route_id)}
+            isDemo={isSimulatedCorridor}
           />
         ))}
       </div>

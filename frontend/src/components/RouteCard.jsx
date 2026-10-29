@@ -1,6 +1,6 @@
 import React from 'react'
 
-export function RouteCard({ route, isSelected, onSelect }) {
+export function RouteCard({ route, isSelected, onSelect, isDemo = false }) {
   const {
     route_id,
     display_name,
@@ -12,6 +12,7 @@ export function RouteCard({ route, isSelected, onSelect }) {
     recommendation,
   } = route
 
+  const isSimulated = isDemo || route_id?.startsWith('demo_') || route.is_demo_data
   const isRecommended = recommendation?.is_recommended
   const isNoTravel = risk_assessment?.no_travel_warning || risk_assessment?.overall_risk_level === 'no_travel'
   const isSevere = risk_assessment?.overall_risk_level === 'severe'
@@ -64,12 +65,21 @@ export function RouteCard({ route, isSelected, onSelect }) {
           <span className="route-rank-number">#{rank}</span>
           <div>
             <h3 className="route-name">{display_name}</h3>
-            <span className="route-id-tag">{route_id} &bull; Mapbox &amp; Weather Assessed</span>
+            <span className="route-id-tag">
+              {route_id} &bull; {isSimulated ? 'Simulated Route Geometry' : 'Mapbox & Weather Assessed'}
+            </span>
           </div>
         </div>
-        <span className={`badge ${getRankBadgeClass()}`}>
-          {isRecommended ? '★ Recommended' : recommendation?.status === 'viable_alternative' ? 'Viable Alternative' : 'Not Recommended'}
-        </span>
+        <div className="route-header-badges">
+          {isSimulated && (
+            <span className="badge badge-demo-indicator" title="Offline demonstration fixture">
+              SIMULATED DEMO DATA
+            </span>
+          )}
+          <span className={`badge ${getRankBadgeClass()}`}>
+            {isRecommended ? '★ Recommended' : recommendation?.status === 'viable_alternative' ? 'Viable Alternative' : 'Not Recommended'}
+          </span>
+        </div>
       </div>
 
       {/* Metrics Row */}

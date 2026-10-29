@@ -5,6 +5,7 @@ import { InteractiveMap } from './components/InteractiveMap'
 import { RouteResults } from './components/RouteResults'
 import { RiskThresholdReference } from './components/RiskThresholdReference'
 import { planRoutes } from './services/api'
+import { DEMO_CORRIDOR_PLAN } from './data/demoCorridor'
 import './App.css'
 
 export default function App() {
@@ -12,6 +13,7 @@ export default function App() {
   const [error, setError] = useState(null)
   const [isPendingSetup, setIsPendingSetup] = useState(false)
   const [pendingSetupMessage, setPendingSetupMessage] = useState('')
+  const [isDemoMode, setIsDemoMode] = useState(false)
   const [routes, setRoutes] = useState([])
   const [selectedRouteId, setSelectedRouteId] = useState(null)
   const [recommendationSummary, setRecommendationSummary] = useState(null)
@@ -29,6 +31,7 @@ export default function App() {
     setError(null)
     setIsPendingSetup(false)
     setPendingSetupMessage('')
+    setIsDemoMode(false) // Form submit switches back to live API mode
     setHasSearched(true)
 
     try {
@@ -69,10 +72,48 @@ export default function App() {
     }
   }
 
+  const handleLoadDemoCorridor = () => {
+    setIsLoading(false)
+    setError(null)
+    setIsPendingSetup(false)
+    setPendingSetupMessage('')
+    setIsDemoMode(true)
+    setHasSearched(true)
+    setRoutes(DEMO_CORRIDOR_PLAN.routes)
+    setRecommendationSummary(DEMO_CORRIDOR_PLAN.recommendation_summary)
+    setSelectedRouteId('demo_route_primary')
+    setQueryParams({
+      origin: 'Chicago, IL',
+      destination: 'Dallas, TX',
+      loadWeightLb: 45000,
+      checkpointIntervalMiles: 25,
+      departureDatetime: '2026-10-30T08:00:00Z',
+    })
+  }
+
+  const handleExitDemoMode = () => {
+    setIsDemoMode(false)
+    setRoutes([])
+    setSelectedRouteId(null)
+    setRecommendationSummary(null)
+    setHasSearched(false)
+    setError(null)
+    setIsPendingSetup(false)
+  }
+
+  const handleToggleDemoMode = () => {
+    if (isDemoMode) {
+      handleExitDemoMode()
+    } else {
+      handleLoadDemoCorridor()
+    }
+  }
+
   const handleReset = () => {
     setError(null)
     setIsPendingSetup(false)
     setPendingSetupMessage('')
+    setIsDemoMode(false)
     setRoutes([])
     setSelectedRouteId(null)
     setRecommendationSummary(null)
@@ -81,7 +122,11 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <Header onReset={handleReset} />
+      <Header
+        onReset={handleReset}
+        isDemoMode={isDemoMode}
+        onToggleDemo={handleToggleDemoMode}
+      />
 
       <main className="dashboard-layout">
         {/* Left Column: Form & Risk Reference */}
@@ -106,6 +151,7 @@ export default function App() {
             isPendingSetup={isPendingSetup}
             hasSearched={hasSearched}
             queryParams={queryParams}
+            isDemo={isDemoMode}
           />
 
           <RouteResults
@@ -119,6 +165,9 @@ export default function App() {
             pendingSetupMessage={pendingSetupMessage}
             hasSearched={hasSearched}
             queryParams={queryParams}
+            isDemo={isDemoMode}
+            onLoadDemo={handleLoadDemoCorridor}
+            onExitDemo={handleExitDemoMode}
           />
         </section>
       </main>
@@ -127,10 +176,11 @@ export default function App() {
         <div className="footer-content">
           <span>Weather-Aware Truck Routing &bull; Commercial Dispatch Platform</span>
           <span className="footer-meta">
-            Interactive Leaflet Vector Map &bull; Step 10 Complete &bull; OpenStreetMap Data &copy; OSM Contributors
+            Interactive Leaflet Vector Corridor Map &bull; Multi-Hazard Risk Engine &bull; OpenStreetMap Data &copy; OSM Contributors
           </span>
         </div>
       </footer>
     </div>
   )
 }
+

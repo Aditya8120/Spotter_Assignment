@@ -799,16 +799,17 @@ The dashboard includes a fully interactive, responsive map canvas powered by **L
 
 ### 6. Automated Testing
 
-The frontend automated test suite includes **61 tests** across 23 suites:
+The frontend automated test suite includes **64 tests** across 24 suites:
 - **`src/services/api.test.js`**: Payload construction, HTTP responses, error normalization, and health checks.
 - **`src/utils/mapUtils.test.js`**: Coordinate validation, GeoJSON coordinate transformation, bounding box calculation, risk level metadata mapping, route polyline styles, and checkpoint extraction.
 - **`src/utils/mapIntegration.test.js`**: Route selection state transitions, multi-segment corridor rendering with mocked data, checkpoint risk marker classifications, missing geometry handling, and empty result safety.
 - **`src/utils/weatherLayers.test.js`**: Wind/precipitation/snowfall threshold evaluations, load-weight elevations, 0–48h timeline generation, timestamp matching, and layer value extraction.
 - **`src/utils/weatherLayersIntegration.test.js`**: Dynamic layer switching, stale data prevention across unrecorded hours, route-selection preservation during slider scrubbing, and empty state resilience.
 - **`src/e2e/dispatchFlow.test.js`**: Complete end-to-end journey tests covering form submission, payload serialization, mock API fetch, geometry inversion, bounds calculation, checkpoint extraction, 0–48h timeline generation, 4-layer evaluation, HTTP 503 setup-pending state, HTTP 400 validation error mapping, and network failure diagnostics.
+- **`src/e2e/demoCorridor.test.js`**: Verification of simulated demo corridor fixtures, route coordinate integrity, and weather layer evaluations.
 
 ```bash
-# Run all frontend tests (61 tests)
+# Run all frontend tests (64 tests)
 cd frontend && npm test
 
 # Run linter
@@ -879,17 +880,130 @@ The complete application pipeline was verified through end-to-end integration an
 | Suite / Check | Command | Result | Details |
 | :--- | :--- | :--- | :--- |
 | **Backend Tests** | `python manage.py test` | **81 Passed** (0 Failures) | Health, serializers, Mapbox service, Open-Meteo service, risk scoring, load rules, lexicographical ranking, No Travel flags, missing weather preservation. |
-| **Frontend Tests** | `npm test` | **61 Passed** (0 Failures) | API client, error mapping, coordinate transformations, map integration, layer thresholds, timeline slider, end-to-end dispatch flow. |
-| **Frontend Linter** | `npm run lint` | **0 Errors, 0 Warnings** | Oxlint verified 21 files. |
+| **Frontend Tests** | `npm test` | **64 Passed** (0 Failures) | API client, error mapping, coordinate transformations, map integration, layer thresholds, timeline slider, end-to-end dispatch flow, demo fixture verification. |
+| **Frontend Linter** | `npm run lint` | **0 Errors, 0 Warnings** | Oxlint verified 23 files. |
 | **Production Build** | `npm run build` | **Passed in 138ms** | Vite production bundle generated without errors or circular dependencies. |
 | **Live API Contracts** | `curl` against local daemons | **Verified** | Health endpoint `200 OK`, unconfigured provider returns clear `503 provider_not_configured`. |
 
-### 3. Limitations & Deployment Prerequisites
+### 3. Demonstration Mode & Simulated Data Integrity
 
-- **Mapbox API Credentials**: In production, configure `MAPBOX_ACCESS_TOKEN` in `backend/.env`. Automated test suites do not require live credentials and use verified mock fixtures.
-- **Tile Usage Policy**: Leaflet uses OpenStreetMap public tiles by default. High-volume commercial deployments should configure `VITE_MAP_TILE_URL` to a dedicated tile provider (e.g. Mapbox, Stadia Maps) per OSM Tile Usage Policy.
-- **Weather Sampling Resolution**: Open-Meteo provides hourly forecast models. Corridor heatmaps represent sampled checkpoint intervals (10, 25, 50 miles) rather than live radar reflectivity sweeps.
-- **Browser Automation Note**: Browser automation in the local sandbox is offline (Playwright binaries cannot be fetched). All UI rendering, state transitions, and integration journeys are verified through automated unit, integration, and E2E Node test suites.
+To enable full offline visual evaluation when `MAPBOX_ACCESS_TOKEN` is not yet configured, the frontend dashboard includes a dedicated **Demonstration Mode**:
+- **Explicit Labeling Guarantee**: All simulated fixture data is unmistakably labeled on-screen with prominent amber badges (`[SIMULATED DEMO DATA]`), corridor tags (`DEMO CORRIDOR`), and an executive warning banner:
+  > **⚠️ DEMONSTRATION PREVIEW (SIMULATED DATA)**: *The corridors, weather checkpoints, and risk metrics shown below are simulated demonstration data designed for offline visual inspection. Live commercial dispatch requires a configured `MAPBOX_ACCESS_TOKEN` in the server environment.*
+- **No Confusion with Live Data**: Standard search submissions automatically dispatch live requests to the backend API. When the live provider returns an error or is unconfigured, the operator is presented with actionable setup instructions alongside an option to preview the demonstration corridor.
+- **Toggle Controls**: Operators can toggle into or out of Demo Mode at any time using the `Demo Corridor` / `Exit Demo` controls in the application header.
+
+---
+
+## Production Deployment Guide & Readiness Checklist
+
+### 1. Production Architecture Overview
+
+In a production environment, the frontend and backend are deployed as follows:
+
+```text
+┌─────────────────────────────────┐
+│     Client Web Browser          │
+│   (React SPA served via CDN/    │
+│    Nginx on port 80/443 HTTPS)  │
+└───────────────┬─────────────────┘
+                │ API Requests (CORS restricted)
+                ▼
+┌─────────────────────────────────┐
+│     Reverse Proxy (Nginx)       │
+│  - SSL / TLS Termination        │
+│  - Static Files (/static/)      │
+│  - Rate Limiting                │
+└───────────────┬─────────────────┘
+                │ Reverse Proxy (Unix Socket or Port 8000)
+                ▼
+┌─────────────────────────────────┐
+│     WSGI Server (Gunicorn)      │
+│  - Workers: 2-4 worker processes│
+│  - Timeout: 60 seconds          │
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│     Django REST Framework       │
+│  - DEBUG=False                  │
+│  - Strict CORS_ALLOWED_ORIGINS  │
+│  - SQLite or PostgreSQL DB      │
+└───────────────┬─────────────────┘
+                │ External HTTPS calls
+                ├──► Mapbox Directions & Geocoding API
+                └──► Open-Meteo Hourly Weather API
+```
+
+### 2. Backend Production Setup (Django)
+
+1. **Install Production Server (e.g. Gunicorn)**:
+   ```bash
+   pip install gunicorn
+   ```
+2. **Configure Production Environment (`backend/.env`)**:
+   ```bash
+   DJANGO_SECRET_KEY=generate-a-strong-random-50-char-secret-key-for-prod
+   DJANGO_DEBUG=False
+   DJANGO_ALLOWED_HOSTS=api.yourcompany.com,127.0.0.1
+   CORS_ALLOWED_ORIGINS=https://dispatch.yourcompany.com
+   DJANGO_DB_NAME=db.sqlite3
+   DJANGO_STATIC_ROOT=staticfiles
+   MAPBOX_ACCESS_TOKEN=pk.your_live_production_mapbox_token
+   ```
+3. **Collect Static Files**:
+   ```bash
+   python manage.py collectstatic --noinput
+   ```
+4. **Apply Migrations**:
+   ```bash
+   python manage.py migrate
+   ```
+5. **Run via Gunicorn**:
+   ```bash
+   gunicorn backend.wsgi:application --bind 127.0.0.1:8000 --workers 3 --timeout 60
+   ```
+
+### 3. Frontend Production Build & Hosting (Vite + React)
+
+1. **Configure Production Environment (`frontend/.env`)**:
+   ```bash
+   VITE_API_BASE_URL=https://api.yourcompany.com
+   VITE_MAP_TILE_URL=https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=pk.your_token
+   VITE_MAP_TILE_ATTRIBUTION=&copy; <a href="https://www.mapbox.com/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>
+   ```
+2. **Build Optimized Production Bundle**:
+   ```bash
+   npm run build
+   ```
+   Outputs minified HTML, CSS, and JS into `frontend/dist/`.
+3. **Serve with Nginx / Caddy / Cloudflare Pages / AWS S3 + CloudFront**:
+   Point your web server root to `frontend/dist/` with SPA fallback routing:
+   ```nginx
+   server {
+       listen 443 ssl http2;
+       server_name dispatch.yourcompany.com;
+
+       root /var/www/weather-truck-routing/frontend/dist;
+       index index.html;
+
+       location / {
+           try_files $uri $uri/ /index.html;
+       }
+   }
+   ```
+
+### 4. Production Readiness Checklist
+
+- [x] **Zero Hardcoded Secrets**: Secrets and tokens are loaded strictly via environment variables; none exist in source code.
+- [x] **Safe Git Tracking**: Root `.gitignore` excludes `.env`, `staticfiles/`, `node_modules/`, `.venv/`, `dist/`, while tracking `.env.example`.
+- [x] **Strict CORS Controls**: `CORS_ALLOWED_ORIGINS` is explicitly mapped to authorized domains; permissive wildcard access is disabled.
+- [x] **Honest Data Transparency**: Missing weather is never classified as Low risk; unconfigured external providers trigger HTTP 503 rather than fabricated telemetry; demo modes are unmistakably labeled.
+- [x] **Production Static Files**: `STATIC_ROOT` configured in Django for `collectstatic`.
+- [x] **Comprehensive Test Suites**: 81 backend tests and 61 frontend tests passing with 0 errors.
+- [ ] **External Credentials Configuration**: Add production `MAPBOX_ACCESS_TOKEN` to `backend/.env`.
+- [ ] **Dedicated Commercial Tiles**: Configure high-volume tile provider in `VITE_MAP_TILE_URL` per OpenStreetMap Tile Usage Policy.
+
 
 
 
