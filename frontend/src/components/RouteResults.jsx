@@ -10,8 +10,18 @@ export function RouteResults({
   pendingSetupMessage = '',
   hasSearched = false,
   queryParams = null,
+  selectedRouteId: propSelectedRouteId,
+  onSelectRoute,
 }) {
-  const [selectedRouteId, setSelectedRouteId] = useState(routes[0]?.route_id || null)
+  const [internalSelectedRouteId, setInternalSelectedRouteId] = useState(routes[0]?.route_id || null)
+  const selectedRouteId = propSelectedRouteId !== undefined ? propSelectedRouteId : internalSelectedRouteId
+  const handleSelectRoute = (id) => {
+    if (onSelectRoute) {
+      onSelectRoute(id)
+    } else {
+      setInternalSelectedRouteId(id)
+    }
+  }
 
   // 1. Loading State
   if (isLoading) {
@@ -210,7 +220,7 @@ export function RouteResults({
             key={route.route_id}
             route={route}
             isSelected={selectedRouteId === route.route_id}
-            onSelect={() => setSelectedRouteId(route.route_id)}
+            onSelect={() => handleSelectRoute(route.route_id)}
           />
         ))}
       </div>

@@ -749,10 +749,92 @@ cd backend
 
 ---
 
-## Next Steps
+## Interactive Map & Route Visualization (Step 10)
 
-- **Step 10**: Integrate interactive Mapbox GL JS map canvas, render vector route polylines colored by weather risk severity, and add interactive checkpoint popups.
-- Interactive weather radar/heatmap layers and synchronized departure forecast slider.
+The dashboard includes a fully interactive, responsive map canvas powered by **Leaflet** and **React Leaflet**, displaying real route polylines and weather hazard checkpoints returned by the backend API.
+
+### 1. Architecture & Libraries
+
+- **`leaflet` (`^1.9.4`)** & **`react-leaflet` (`^5.0.0`)**: Integrated natively with React 19 without peer dependency conflicts.
+- **`leaflet/dist/leaflet.css`**: Loaded in `main.jsx` for map controls, panes, popups, and zoom widgets.
+- **Custom `L.divIcon` Markers**: Origin, Destination, and Checkpoints use HTML/SVG DivIcons, eliminating 404 image errors in Vite bundlers.
+- **`frontend/src/utils/mapUtils.js`**: Pure, testable utilities for coordinate validation, GeoJSON `[lon, lat]` to Leaflet `[lat, lon]` transformations, bounding box calculations, and risk level metadata.
+
+### 2. Geometry Handling & Coordinate Transformation
+
+- **Backend API Format**: Mapbox Directions API outputs GeoJSON LineString coordinates in `[longitude, latitude]` order.
+- **Leaflet Expectation**: Leaflet `Polyline` requires `[latitude, longitude]` coordinates.
+- **Transformation**: `parseRouteGeometry` validates every coordinate pair (`-90 <= lat <= 90`, `-180 <= lon <= 180`), inverts `[lon, lat]` to `[lat, lon]`, and rejects corrupt points.
+- **Anti-Fabrication Guarantee**: If route geometry is null or empty, **no artificial lines are drawn** between endpoints. The UI gracefully displays an informative banner while rendering available checkpoint markers.
+
+### 3. Route Selection & Viewport Fitting
+
+- **Bidirectional Linking**: Route selection is synchronized between the map header tab bar (`#1`, `#2`, `#3`) and the route cards in the results grid.
+- **Selected Route Style**: Prominent stroke (`weight: 6`, `opacity: 0.95`, primary blue), high z-index, and interactive hover tooltip.
+- **Alternative Routes Style**: Subtle dashed lines (`weight: 4`, `opacity: 0.55`, purple/cyan palette). Clicking an alternative route's polyline switches active selection.
+- **Dynamic Viewport (`fitBounds`)**: `<MapBoundsController>` automatically fits the Leaflet viewport to the bounds of the active route with 50px padding whenever routes or selection change.
+
+### 4. Checkpoint Risk Markers & Popups
+
+- **Ordered Waypoints**: Checkpoints are rendered strictly in route sequence along the active corridor.
+- **Endpoint Markers**:
+  - **Origin (Point A)**: Emerald pin with scheduled departure datetime and coordinates.
+  - **Destination (Point B)**: Crimson pin with estimated arrival datetime and total distance.
+- **Risk Categorization**:
+  - 🟢 **Low Risk**: Wind < 25 mph, precip < 0.10 in/h, snow < 1.0 in/h (`#10b981`)
+  - 🟡 **Moderate Risk**: Wind 25–34 mph, precip 0.10–0.25 in/h, snow 1.0–1.9 in/h (`#f59e0b`)
+  - 🟠 **High Risk**: Wind 35–44 mph, precip > 0.25–0.50 in/h, snow 2.0–2.9 in/h (`#f97316`)
+  - 🔴 **Severe Risk**: Wind 45–54 mph, precip > 0.50 in/h, snow ≥ 3.0 in/h (`#ef4444`)
+  - ⛔ **No Travel Advisory**: Wind ≥ 55 mph, or elevated crosswind threshold for light/empty truck (`#991b1b`)
+  - ⚪ **Unknown / Pending**: Weather data unavailable or pending assessment (`#64748b`)
+  - **Rule**: Missing, null, or unrecognized risk data is strictly mapped to **Unknown**, never Low.
+- **Interactive Popups**: Clicking any checkpoint displays waypoint name, sequence number, distance from origin, estimated arrival time, risk level badge, risk summary, and weather observations (temperature, sustained wind, gusts, precipitation rate, snowfall rate).
+
+### 5. OpenStreetMap Tile Source & Usage Policy
+
+- **Default Tile URL**: `https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`
+- **Attribution**: `&copy; OpenStreetMap contributors`
+- **Configurable**: Configurable via `VITE_MAP_TILE_URL` and `VITE_MAP_TILE_ATTRIBUTION`.
+- **Policy Compliance**: In accordance with the [OpenStreetMap Tile Usage Policy](https://operations.osmfoundation.org/policies/tiles/), tiles are accessed with fair-use request rates, caching, and clear attribution. High-volume commercial production deployments must use dedicated commercial tile providers (Mapbox, Stadia, Protomaps, Thunderforest) or a self-hosted tile cache.
+
+### 6. Automated Testing
+
+The frontend automated test suite includes **38 tests** across 13 suites:
+- **`src/services/api.test.js`**: Payload construction, HTTP responses, error normalization, and health checks.
+- **`src/utils/mapUtils.test.js`**: Coordinate validation, GeoJSON coordinate transformation, bounding box calculation, risk level metadata mapping, route polyline styles, and checkpoint extraction.
+- **`src/utils/mapIntegration.test.js`**: Route selection state transitions, multi-segment corridor rendering with mocked data, checkpoint risk marker classifications, missing geometry handling, and empty result safety.
+
+```bash
+# Run all frontend tests
+cd frontend && npm test
+
+# Run linter
+cd frontend && npm run lint
+
+# Run production build
+cd frontend && npm run build
+
+# Run backend regression tests
+cd backend && .venv/bin/python manage.py test
+```
+
+---
+
+## Current Status & Next Steps
+
+- **Completed**:
+  - Steps 1–3: DRF routing app, request/response serializers, input validation.
+  - Step 4: Mapbox Directions API integration with distance-based checkpoint sampling.
+  - Step 5: Open-Meteo weather forecast API integration with arrival-time weather sampling.
+  - Step 6: Multi-hazard weather risk engine with truck load elevation rules.
+  - Step 7: Lexicographic route recommendation and ranking engine.
+  - Step 8: React frontend UI dashboard prototype.
+  - Step 9: Frontend-backend API integration, error normalization, and distinct lifecycle states.
+  - Step 10: Interactive Leaflet map canvas, route polylines, checkpoint risk markers, popups, and route selector.
+- **Deferred to Subsequent Steps**:
+  - Interactive weather radar/heatmap overlays and forecast departure slider.
+  - Live Mapbox API credentials configuration.
+
 
 
 

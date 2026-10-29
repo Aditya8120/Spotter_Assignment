@@ -593,6 +593,372 @@
 }
 
 /* =========================================================================
+   Interactive Leaflet Map & Hazard Overlay (Step 10)
+   ========================================================================= */
+.map-viewport-wrapper {
+  position: relative;
+  width: 100%;
+  height: 520px;
+  min-height: 440px;
+  background-color: #0c111a;
+  overflow: hidden;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.leaflet-map-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 440px;
+  z-index: 1;
+}
+
+.leaflet-map-canvas .leaflet-tile-pane {
+  filter: brightness(0.85) contrast(1.1) saturate(0.9);
+}
+
+.leaflet-container {
+  font-family: var(--font-sans);
+}
+
+.leaflet-container:focus {
+  outline: none;
+}
+
+/* Route Selector Tabs in Map Header */
+.map-route-selector-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 12px;
+}
+
+.map-tab-btn {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.map-tab-btn:hover {
+  background: #334155;
+  color: #ffffff;
+}
+
+.map-tab-btn.active {
+  background: #2563eb;
+  border-color: #3b82f6;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.4);
+}
+
+.tab-rank {
+  opacity: 0.8;
+  font-size: 11px;
+}
+
+.tab-rec-star {
+  color: #fef08a;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.btn-legend-toggle {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-legend-toggle:hover {
+  background: #334155;
+  color: #ffffff;
+}
+
+/* Leaflet Custom Popups */
+.map-custom-popup .leaflet-popup-content-wrapper {
+  background: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+  padding: 0;
+}
+
+.map-custom-popup .leaflet-popup-tip {
+  background: #0f172a;
+  border-left: 1px solid #334155;
+  border-top: 1px solid #334155;
+}
+
+.map-custom-popup .leaflet-popup-content {
+  margin: 12px 14px;
+  min-width: 220px;
+  max-width: 300px;
+}
+
+.popup-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popup-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.cp-seq-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: #334155;
+  color: #e2e8f0;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.popup-risk-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.popup-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.3;
+}
+
+.popup-meta {
+  margin: 0;
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+
+.popup-badge {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: fit-content;
+}
+
+.badge-origin {
+  background: #064e3b;
+  color: #34d399;
+}
+
+.badge-dest {
+  background: #7f1d1d;
+  color: #f87171;
+}
+
+.popup-metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  margin-top: 4px;
+  background: rgba(30, 41, 59, 0.5);
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+.popup-metric {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+}
+
+.p-label {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.p-val {
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+.popup-risk-summary {
+  font-size: 11px;
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.3);
+  border-left: 3px solid #ef4444;
+  padding: 4px 8px;
+  border-radius: 3px;
+  margin-top: 4px;
+}
+
+/* Floating Risk Legend Panel */
+.map-risk-legend-panel {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 999;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(10px);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px 14px;
+  max-width: 320px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #1e293b;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.legend-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.btn-legend-close {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-legend-close:hover {
+  color: #ffffff;
+}
+
+.legend-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.legend-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.legend-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.legend-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.legend-desc {
+  font-size: 10.5px;
+  color: #94a3b8;
+  line-height: 1.25;
+}
+
+/* Floating Overlay Banners */
+.map-overlay-banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
+  max-width: 480px;
+  width: calc(100% - 32px);
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(10px);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.overlay-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: #e2e8f0;
+}
+
+.overlay-content strong {
+  color: #ffffff;
+  display: block;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.overlay-content p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.overlay-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.ready-overlay {
+  border-left: 4px solid #3b82f6;
+}
+
+.loading-overlay {
+  border-left: 4px solid #60a5fa;
+}
+
+.setup-overlay {
+  border-left: 4px solid #f59e0b;
+}
+
+.warning-overlay {
+  border-left: 4px solid #f97316;
+}
+
+.error-overlay {
+  border-left: 4px solid #ef4444;
+}
+
+/* =========================================================================
    5. Route Results & Route Cards
    ========================================================================= */
 .results-section {
