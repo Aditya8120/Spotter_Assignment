@@ -209,14 +209,18 @@ class MapboxRoutingService(BaseRouteEngine):
         self,
         origin: Dict[str, Any],
         destination: Dict[str, Any],
-        departure_datetime: datetime,
+        departure_datetime: Any,
         load_weight_lb: float,
     ) -> List[Dict[str, Any]]:
         """
         Main interface method. Resolves locations, calls Mapbox, and formats response.
         """
+        if isinstance(departure_datetime, str):
+            departure_datetime = datetime.fromisoformat(departure_datetime.replace('Z', '+00:00'))
+
         origin_lat, origin_lon, origin_label = self.resolve_coordinates(origin)
         dest_lat, dest_lon, dest_label = self.resolve_coordinates(destination)
+
 
         raw_routes = self.get_directions(origin_lat, origin_lon, dest_lat, dest_lon)
 

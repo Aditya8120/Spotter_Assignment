@@ -490,5 +490,99 @@ class RoutePlanningAPIWithMapboxTests(APITestCase):
         self.assertEqual(response.get("Access-Control-Allow-Origin"), "http://localhost:5173")
 
 
+class RouteResponseContractTests(APITestCase):
+    """
+    Validates that the response serializers can accurately represent up to 3 routes
+    with all required checkpoints, weather observations, and risk scores.
+    """
+    def test_full_route_response_schema_validation(self):
+        mock_data = {
+            "status": "planned",
+            "message": "Routes generated successfully.",
+            "request_summary": {
+                "origin": "Chicago, IL",
+                "destination": "Dallas, TX",
+                "departure_datetime": "2026-10-30T08:00:00Z",
+                "load_weight_lb": 40000.0,
+            },
+            "routes": [
+                {
+                    "route_id": "mapbox-route-1",
+                    "display_name": "I-55 S to I-30 W (Recommended)",
+                    "distance_km": 1488.5,
+                    "distance_miles": 925.4,
+                    "duration_seconds": 51600,
+                    "duration_formatted": "14h 20m",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[-87.6298, 41.8781], [-96.7970, 32.7767]]
+                    },
+                    "checkpoints": [
+                        {
+                            "sequence": 1,
+                            "name": "Chicago Origin",
+                            "latitude": 41.8781,
+                            "longitude": -87.6298,
+                            "estimated_arrival": "2026-10-30T08:00:00Z",
+                            "distance_from_origin_km": 0.0,
+                            "distance_from_origin_miles": 0.0,
+                            "duration_from_origin_seconds": 0,
+                            "weather": {
+                                "temperature": 45.0,
+                                "condition": "Overcast",
+                                "wind_speed_mph": 12.5,
+                                "wind_gust_mph": 18.0,
+                                "precipitation_probability": 10.0,
+                                "visibility_miles": 10.0,
+                                "units": {
+                                    "temperature": "°F",
+                                    "wind_speed": "mph",
+                                    "precipitation": "%",
+                                    "visibility": "miles"
+                                }
+                            },
+                            "risk_level": "low",
+                            "risk_summary": "Favorable driving conditions."
+                        },
+                        {
+                            "sequence": 2,
+                            "name": "Dallas Destination",
+                            "latitude": 32.7767,
+                            "longitude": -96.7970,
+                            "estimated_arrival": "2026-10-30T22:20:00Z",
+                            "distance_from_origin_km": 1488.5,
+                            "distance_from_origin_miles": 925.4,
+                            "duration_from_origin_seconds": 51600,
+                            "weather": None,
+                            "risk_level": "unknown",
+                            "risk_summary": None
+                        }
+                    ],
+                    "weather_summary": {},
+                    "risk_assessment": {
+                        "overall_risk_level": "low",
+                        "risk_score": 15.0,
+                        "risk_factors": [],
+                        "summary": "Favorable driving conditions."
+                    },
+                    "recommendation": {
+                        "is_recommended": True,
+                        "status": "recommended",
+                        "explanation": "Best balance of transit time and road conditions."
+                    }
+                }
+            ]
+        }
+
+        serializer = RoutePlanResponseSerializer(data=mock_data)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(len(serializer.validated_data["routes"]), 1)
+        route = serializer.validated_data["routes"][0]
+        self.assertEqual(route["route_id"], "mapbox-route-1")
+        self.assertEqual(route["recommendation"]["status"], "recommended")
+        self.assertEqual(len(route["checkpoints"]), 2)
+
+
+
 
 
