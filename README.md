@@ -154,11 +154,11 @@ python manage.py test
 
 ---
 
-### 2. Route Planning Endpoint
+### 2. Route Planning & Weather Integration Endpoint
 
 - **Method**: `POST`
 - **Path**: `/api/routes/`
-- **Description**: Validates route request parameters, resolves locations (via Mapbox Geocoding if text), and obtains real driving routes via the Mapbox Directions API (`v5/mapbox/driving`).
+- **Description**: Validates route request parameters, resolves locations (via Mapbox Geocoding if text), generates driving routes via Mapbox Directions API (`v5/mapbox/driving`), samples checkpoints at configurable intervals (10, 25, or 50 miles), and fetches hourly weather forecasts from Open-Meteo for each checkpoint's estimated arrival time.
 
 #### Request Schema
 
@@ -168,6 +168,7 @@ python manage.py test
 | `destination` | String or Object | **Yes** | Ending location as a text query or coordinate pair. | `"Dallas, TX"` or `{"latitude": 32.7767, "longitude": -96.7970}` |
 | `departure_datetime` | String (ISO 8601) | **Yes** | Scheduled departure timestamp. | `"2026-10-30T08:00:00Z"` |
 | `load_weight_lb` | Float | **Yes** | Truck cargo load weight in pounds (> 0). | `35000.0` |
+| `checkpoint_interval_miles` | Integer | **No** | Sampling interval along route geometry (`10`, `25`, or `50` miles). Default is `25`. | `25` |
 
 ##### Supported Location Formats for `origin` and `destination`:
 1. **Text Query**: `"Chicago, IL"` or `"123 Main St, Springfield"` (geocoded automatically via Mapbox Geocoding)
@@ -179,7 +180,7 @@ python manage.py test
 
 | Status Code | Code | Reason |
 | :--- | :--- | :--- |
-| `400 Bad Request` | `validation_error` | Missing required fields, non-positive `load_weight_lb`, invalid ISO datetime, out-of-range coordinates, or identical origin/destination. |
+| `400 Bad Request` | `validation_error` | Missing required fields, non-positive `load_weight_lb`, invalid ISO datetime, out-of-range coordinates, invalid `checkpoint_interval_miles` (must be 10, 25, or 50), or identical origin/destination. |
 | `400 Bad Request` | `geocoding_failed` | Location text query could not be resolved to valid geographic coordinates. |
 | `404 Not Found` | `no_route_found` | No drivable route found between coordinates (e.g. islands or unnavigable terrain). |
 | `429 Too Many Requests` | `rate_limit_exceeded` | Upstream Mapbox API rate limit reached. |
@@ -187,29 +188,68 @@ python manage.py test
 | `503 Service Unavailable` | `provider_not_configured` | Server environment is missing `MAPBOX_ACCESS_TOKEN`. |
 | `504 Gateway Timeout` | `provider_timeout` | Request to Mapbox timed out. |
 
-#### Response Schema & Units
+---
 
-- **Distance**: Represented in kilometers (`distance_km`) and miles (`distance_miles`).
-- **Duration**: Represented in integer seconds (`duration_seconds`) and formatted display string (`duration_formatted`, e.g. `"14h 20m"`).
-- **Geometry**: GeoJSON `LineString` with coordinate pairs `[[longitude, latitude], ...]`.
-- **Alternatives**: Requests alternatives where supported, returning up to three distinct routes when provided. Does not fabricate extra alternatives if fewer are returned.
+### Weather Integration (Open-Meteo Forecast API)
+
+The backend integrates with the **Open-Meteo Forecast API** (`https://api.open-meteo.com/v1/forecast`) using a modular weather engine (`OpenMeteoWeatherService`).
+
+#### Key Features & Implementation Details:
+- **No API Key Required**: Open-Meteo's standard forecast API operates openly without requiring API keys or exposing secrets.
+- **Estimated Arrival Time Matching**: Weather forecasts are matched to each checkpoint using its **estimated arrival time** (calculated proportionally along the route from the departure timestamp), rather than simply using the origin departure time.
+- **Nearest Hourly Forecast Slot**: The service parses UTC forecast timestamps and matches each checkpoint arrival to the closest hourly forecast slot.
+- **Coordinate Deduplication**: Checkpoints with identical or nearby coordinates (within ~110m) are deduplicated before issuing requests, preventing unnecessary repeated API queries.
+- **Resilient Degradation**: If the weather provider times out or experiences an outage, routes are still returned successfully with checkpoint `data_availability: "unavailable"`, ensuring user workflows are not blocked.
+
+#### Weather Variables & Standardized Units
+
+| Variable | API Parameter | Stored Field | Output Unit | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Wind Speed** | `wind_speed_10m` | `wind_speed_mph` | `mph` | Wind speed at 10 meters above ground in miles per hour. |
+| **Wind Gusts** | `wind_gusts_10m` | `wind_gust_mph` | `mph` | Peak wind gusts in miles per hour. |
+| **Precipitation Rate** | `precipitation` | `precipitation_in_per_hour` | `in/h` | Liquid-equivalent precipitation intensity derived from 1-hour accumulation. |
+| **Snowfall Rate** | `snowfall` | `snowfall_in_per_hour` | `in/h` | Snowfall depth intensity derived from 1-hour accumulation. |
+| **Temperature** | `temperature_2m` | `temperature` | `°F` | Ambient air temperature at 2 meters above ground. |
+| **Precipitation Probability** | `precipitation_probability` | `precipitation_probability` | `%` | Hourly probability of precipitation (0–100%). |
+| **Weather Condition** | `weather_code` | `condition`, `weather_code` | text / int | Human-readable condition mapped from WMO 4677 standard codes. |
+| **Data Availability** | N/A | `data_availability` | string | Status: `available`, `partial`, `out_of_forecast_horizon`, or `unavailable`. |
+
+#### Forecast Limitations & Intensity Calculation Notice
+> [!IMPORTANT]
+> **Precipitation & Snowfall Intensity Rates**: Open-Meteo provides preceding 1-hour accumulated precipitation amounts (liquid equivalent in inches) and snowfall amounts (snow depth in inches). Average rates in `in/h` are calculated over this 1-hour discrete interval. They reflect 1-hour average accumulations rather than instantaneous radar reflectivity rates.
+> **No Zero-Defaulting for Missing Data**: Missing or unobserved variables in provider responses are strictly preserved as `null` (`None`) and marked `partial`. The application **never** invents rates or silently replaces missing weather data with `0.0`.
+> **Forecast Horizon Limits**: Forecast data is limited to the provider's forecast horizon (typically 7–14 days). Checkpoints with arrival dates beyond the available horizon are safely tagged with `data_availability: "out_of_forecast_horizon"`, setting weather variables to `null` with explicit limitation notes.
+
+---
+
+### Checkpoint Sampling
+
+- **Configurable Intervals**: Routes can be sampled at `10`, `25`, or `50` miles (`checkpoint_interval_miles`).
+- **Exact Unit Conversion**: Miles are converted to kilometers using the standard conversion factor: `1 mi = 1.609344 km` (`1609.344 meters`).
+- **Endpoint Preservation**: Route order is strictly preserved. Sequence 1 always represents Departure (0.0 mi), intermediate checkpoints represent sampled intervals along the polyline, and the final sequence represents Arrival at the destination.
+- **Duplicate Prevention**: Sampled checkpoints within 1.0 mile of the destination are omitted to prevent duplicate checkpoints at the endpoint.
+
+---
+
+#### Response Schema & Example
 
 ```json
 {
   "status": "planned",
-  "message": "Routes successfully calculated via Mapbox Directions API. Note: Routes reflect standard driving directions and do not yet account for truck restrictions (height/weight limits), weather hazards, or road closures.",
+  "message": "Routes successfully calculated via Mapbox Directions API with weather forecasts from Open-Meteo. Note: Routes reflect standard driving directions and do not yet account for truck restrictions (height/weight limits) or road closures.",
   "request_summary": {
     "origin": "Chicago, IL",
     "destination": "Dallas, TX",
     "departure_datetime": "2026-10-30T08:00:00Z",
-    "load_weight_lb": 35000.0
+    "load_weight_lb": 35000.0,
+    "checkpoint_interval_miles": 50
   },
   "routes": [
     {
       "route_id": "mapbox-route-1",
       "display_name": "Primary Route (via I-55 S, I-30 W)",
       "distance_km": 1488.5,
-      "distance_miles": 924.9,
+      "distance_miles": 924.6,
       "duration_seconds": 50400,
       "duration_formatted": "14h 0m",
       "geometry": {
@@ -230,25 +270,80 @@ python manage.py test
           "distance_from_origin_km": 0.0,
           "distance_from_origin_miles": 0.0,
           "duration_from_origin_seconds": 0,
-          "weather": null,
+          "weather": {
+            "timestamp": "2026-10-30T08:00:00Z",
+            "forecast_timestamp": "2026-10-30T08:00:00+00:00",
+            "data_availability": "available",
+            "temperature": 42.0,
+            "condition": "Overcast",
+            "weather_code": 3,
+            "wind_speed_mph": 14.0,
+            "wind_gust_mph": 18.5,
+            "precipitation_probability": 20.0,
+            "precipitation_in_per_hour": 0.0,
+            "snowfall_in_per_hour": 0.0,
+            "precipitation_accumulation_in": 0.0,
+            "snowfall_accumulation_in": 0.0,
+            "units": {
+              "temperature": "°F",
+              "wind_speed": "mph",
+              "wind_gust": "mph",
+              "precipitation": "in/h",
+              "snowfall": "in/h",
+              "precipitation_probability": "%",
+              "visibility": "miles"
+            }
+          },
           "risk_level": "unknown",
           "risk_summary": null
         },
         {
           "sequence": 2,
-          "name": "Arrival: Dallas, TX",
-          "latitude": 32.7767,
-          "longitude": -96.7970,
-          "estimated_arrival": "2026-10-30T22:00:00Z",
-          "distance_from_origin_km": 1488.5,
-          "distance_from_origin_miles": 924.9,
-          "duration_from_origin_seconds": 50400,
-          "weather": null,
+          "name": "Mile 50 (I-55 S)",
+          "latitude": 41.3524,
+          "longitude": -88.1942,
+          "estimated_arrival": "2026-10-30T08:45:00Z",
+          "distance_from_origin_km": 80.5,
+          "distance_from_origin_miles": 50.0,
+          "duration_from_origin_seconds": 2724,
+          "weather": {
+            "timestamp": "2026-10-30T08:45:00Z",
+            "forecast_timestamp": "2026-10-30T09:00:00+00:00",
+            "data_availability": "available",
+            "temperature": 43.5,
+            "condition": "Light drizzle",
+            "weather_code": 51,
+            "wind_speed_mph": 16.2,
+            "wind_gust_mph": 22.0,
+            "precipitation_probability": 45.0,
+            "precipitation_in_per_hour": 0.04,
+            "snowfall_in_per_hour": 0.0,
+            "precipitation_accumulation_in": 0.04,
+            "snowfall_accumulation_in": 0.0,
+            "units": {
+              "temperature": "°F",
+              "wind_speed": "mph",
+              "wind_gust": "mph",
+              "precipitation": "in/h",
+              "snowfall": "in/h",
+              "precipitation_probability": "%",
+              "visibility": "miles"
+            }
+          },
           "risk_level": "unknown",
           "risk_summary": null
         }
       ],
-      "weather_summary": {},
+      "weather_summary": {
+        "total_checkpoints": 20,
+        "available_checkpoints": 20,
+        "max_wind_speed_mph": 24.5,
+        "max_precipitation_in_per_hour": 0.15,
+        "max_snowfall_in_per_hour": 0.0,
+        "conditions_observed": ["Light drizzle", "Overcast"],
+        "provider": "Open-Meteo Forecast API",
+        "limitations": "Hourly precipitation and snowfall represent 1-hour average rates derived from accumulated forecast amounts, not instantaneous radar rates. Missing values are preserved as null."
+      },
       "risk_assessment": {
         "overall_risk_level": "unknown",
         "risk_score": null,
@@ -267,7 +362,7 @@ python manage.py test
 
 #### Example Usage
 
-**Valid Request:**
+**Valid Request with 25-Mile Sampling:**
 ```bash
 curl -i -X POST http://127.0.0.1:8000/api/routes/ \
   -H "Content-Type: application/json" \
@@ -276,34 +371,29 @@ curl -i -X POST http://127.0.0.1:8000/api/routes/ \
     "origin": "Chicago, IL",
     "destination": "Dallas, TX",
     "departure_datetime": "2026-10-30T08:00:00Z",
-    "load_weight_lb": 35000.0
+    "load_weight_lb": 35000.0,
+    "checkpoint_interval_miles": 25
   }'
 ```
 
-**Invalid Request (Validation Error):**
+**Invalid Request (Unsupported Interval):**
 ```bash
 curl -i -X POST http://127.0.0.1:8000/api/routes/ \
   -H "Content-Type: application/json" \
   -d '{
     "origin": "Chicago, IL",
+    "destination": "Dallas, TX",
     "departure_datetime": "2026-10-30T08:00:00Z",
-    "load_weight_lb": -50
+    "load_weight_lb": 35000.0,
+    "checkpoint_interval_miles": 15
   }'
 ```
 Response (`400 Bad Request`):
 ```json
 {
-  "destination": ["Destination location is required."],
-  "load_weight_lb": ["Load weight must be a positive number greater than 0 pounds."]
+  "checkpoint_interval_miles": ["Checkpoint interval must be 10, 25, or 50 miles."]
 }
 ```
-
-#### Provider Limitations & Road Routing Notice
-> [!IMPORTANT]
-> **Passenger Car Routing Only**: Routes are currently retrieved using the Mapbox `driving` profile. They **do not** account for commercial truck restrictions, including bridge weight limits, low clearances, truck-prohibited parkways, hazardous cargo restrictions, or road closures.
-> **Weather Integration Pending**: Checkpoint weather observations and weather risk scoring are modular stubs under `backend/routing/services/` awaiting subsequent implementation steps.
-
-
 
 ---
 
@@ -334,7 +424,9 @@ npm run build
 
 ## Next Steps
 
-- Weather data integration (Open-Meteo or NWS / weather API provider)
-- Routing and waypoint optimization engine
-- Interactive map UI and route visualization
+- Weather hazard risk scoring engine (evaluating wind, rain, snow risks against truck load weight)
+- Route ranking and recommendation algorithm
+- Interactive map UI and route visualization with weather layer
+
+
 

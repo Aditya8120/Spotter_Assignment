@@ -5,6 +5,7 @@ Never logs or exposes tokens in error messages.
 """
 from datetime import datetime, timedelta
 import logging
+import math
 import os
 from typing import Any, Dict, List, Optional, Tuple
 import requests
@@ -87,13 +88,13 @@ class MapboxRoutingService(BaseRouteEngine):
         Resolves a location payload (coordinates dict or text query) into (latitude, longitude, label).
         """
         loc_type = location.get("type")
-        if loc_type == "coordinates":
+        if loc_type == "coordinates" or ("latitude" in location and "longitude" in location):
             lat = float(location["latitude"])
             lon = float(location["longitude"])
             label = location.get("label") or f"{lat}, {lon}"
             return lat, lon, label
 
-        if loc_type == "text":
+        if loc_type == "text" or "query" in location:
             query = location.get("query", "").strip()
             return self.geocode_text(query)
 
@@ -211,6 +212,7 @@ class MapboxRoutingService(BaseRouteEngine):
         destination: Dict[str, Any],
         departure_datetime: Any,
         load_weight_lb: float,
+        checkpoint_interval_miles: int = 25,
     ) -> List[Dict[str, Any]]:
         """
         Main interface method. Resolves locations, calls Mapbox, and formats response.
@@ -260,9 +262,10 @@ class MapboxRoutingService(BaseRouteEngine):
                     ),
                 }
 
-            # Extract ordered checkpoints
+            # Extract ordered checkpoints sampled at target interval
             checkpoints = self._build_checkpoints(
                 legs=legs,
+                geometry=route.get("geometry"),
                 origin_lat=origin_lat,
                 origin_lon=origin_lon,
                 origin_label=origin_label,
@@ -272,6 +275,7 @@ class MapboxRoutingService(BaseRouteEngine):
                 departure_dt=departure_datetime,
                 total_duration_sec=dur_seconds,
                 total_dist_meters=dist_meters,
+                interval_miles=checkpoint_interval_miles,
             )
 
             formatted_routes.append({
@@ -298,6 +302,7 @@ class MapboxRoutingService(BaseRouteEngine):
     def _build_checkpoints(
         self,
         legs: List[Dict[str, Any]],
+        geometry: Optional[Dict[str, Any]],
         origin_lat: float,
         origin_lon: float,
         origin_label: str,
@@ -307,18 +312,23 @@ class MapboxRoutingService(BaseRouteEngine):
         departure_dt: datetime,
         total_duration_sec: int,
         total_dist_meters: float,
+        interval_miles: int = 25,
     ) -> List[Dict[str, Any]]:
         """
-        Builds an ordered sequence of route checkpoints from legs and maneuvers.
+        Builds an ordered sequence of route checkpoints sampled at configurable intervals (10, 25, or 50 miles).
+        Includes departure and arrival endpoints, preserves sequence order, and avoids duplicate checkpoints.
+        Accurately converts miles to kilometers using 1 mi = 1.609344 km.
         """
         checkpoints: List[Dict[str, Any]] = []
+        METERS_PER_MILE = 1609.344
+        MILES_TO_KM = 1.609344
 
         # 1. Origin Checkpoint
         checkpoints.append({
             "sequence": 1,
             "name": f"Departure: {origin_label}",
-            "latitude": origin_lat,
-            "longitude": origin_lon,
+            "latitude": round(origin_lat, 6),
+            "longitude": round(origin_lon, 6),
             "estimated_arrival": departure_dt.isoformat(),
             "distance_from_origin_miles": 0.0,
             "distance_from_origin_km": 0.0,
@@ -328,54 +338,108 @@ class MapboxRoutingService(BaseRouteEngine):
             "risk_summary": None,
         })
 
-        # 2. Intermediate Waypoints (Sampled from key steps)
-        cum_dist_meters = 0.0
-        cum_dur_seconds = 0.0
+        total_dist_miles = total_dist_meters / METERS_PER_MILE if METERS_PER_MILE > 0 else 0.0
+        step_interval = float(interval_miles if interval_miles in (10, 25, 50) else 25)
 
-        all_steps = []
-        for leg in legs:
-            for step in leg.get("steps", []):
-                all_steps.append(step)
+        # 2. Extract polyline coordinates for distance interpolation
+        coords: List[List[float]] = []
+        if geometry and isinstance(geometry, dict):
+            coords = geometry.get("coordinates", [])
 
-        # To keep checkpoint list clean and useful for weather sampling (aim for 5-15 checkpoints):
-        if len(all_steps) > 2:
-            step_stride = max(1, len(all_steps) // 8)
-            seq_num = 2
-
-            for i, step in enumerate(all_steps[1:-1], start=1):
-                cum_dist_meters += float(step.get("distance", 0.0))
-                cum_dur_seconds += float(step.get("duration", 0.0))
-
-                if i % step_stride == 0:
-                    maneuver = step.get("maneuver", {})
-                    loc = maneuver.get("location")  # [lon, lat]
+        if not coords or len(coords) < 2:
+            for leg in legs:
+                for step in leg.get("steps", []):
+                    loc = step.get("maneuver", {}).get("location")
                     if loc and len(loc) >= 2:
-                        step_lon, step_lat = float(loc[0]), float(loc[1])
-                        name = step.get("name") or maneuver.get("instruction") or f"Waypoint {seq_num - 1}"
-                        arrival_dt = departure_dt + timedelta(seconds=int(cum_dur_seconds))
+                        coords.append(loc)
 
-                        checkpoints.append({
-                            "sequence": seq_num,
-                            "name": name,
-                            "latitude": round(step_lat, 6),
-                            "longitude": round(step_lon, 6),
-                            "estimated_arrival": arrival_dt.isoformat(),
-                            "distance_from_origin_miles": round(cum_dist_meters * 0.000621371, 1),
-                            "distance_from_origin_km": round(cum_dist_meters / 1000.0, 1),
-                            "duration_from_origin_seconds": int(round(cum_dur_seconds)),
-                            "weather": None,
-                            "risk_level": "unknown",
-                            "risk_summary": None,
-                        })
-                        seq_num += 1
+        if not coords or len(coords) < 2:
+            coords = [[origin_lon, origin_lat], [dest_lon, dest_lat]]
+
+        # Compute cumulative distance along the polyline segments (in meters)
+        def _segment_distance(p1: List[float], p2: List[float]) -> float:
+            R = 6371000.0  # Earth radius in meters
+            phi1, phi2 = math.radians(p1[1]), math.radians(p2[1])
+            dphi = math.radians(p2[1] - p1[1])
+            dlambda = math.radians(p2[0] - p1[0])
+            a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+            return 2.0 * R * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+
+        cum_meters = [0.0]
+        for i in range(len(coords) - 1):
+            d = _segment_distance(coords[i], coords[i + 1])
+            cum_meters.append(cum_meters[-1] + d)
+
+        total_poly_dist = cum_meters[-1]
+        scale = (total_dist_meters / total_poly_dist) if total_poly_dist > 0 else 1.0
+        scaled_cum = [d * scale for d in cum_meters]
+
+        # Target mile marks: strictly strictly before destination (at least 1.0 mile before destination)
+        target_marks: List[float] = []
+        curr_mark = step_interval
+        while curr_mark < (total_dist_miles - 1.0):
+            target_marks.append(curr_mark)
+            curr_mark += step_interval
+
+        seq_num = 2
+        for mark_miles in target_marks:
+            target_m = mark_miles * METERS_PER_MILE
+
+            # Interpolate position along polyline
+            interp_lon, interp_lat = coords[-1][0], coords[-1][1]
+            for i in range(len(scaled_cum) - 1):
+                if scaled_cum[i] <= target_m <= scaled_cum[i + 1]:
+                    span = scaled_cum[i + 1] - scaled_cum[i]
+                    f = (target_m - scaled_cum[i]) / span if span > 0 else 0.0
+                    interp_lon = coords[i][0] + f * (coords[i + 1][0] - coords[i][0])
+                    interp_lat = coords[i][1] + f * (coords[i + 1][1] - coords[i][1])
+                    break
+
+            # Find matching step instruction/name if available
+            step_name = ""
+            cum_step_m = 0.0
+            for leg in legs:
+                for step in leg.get("steps", []):
+                    s_dist = float(step.get("distance", 0.0))
+                    if cum_step_m <= target_m <= (cum_step_m + s_dist):
+                        step_name = step.get("name") or step.get("maneuver", {}).get("instruction", "")
+                        break
+                    cum_step_m += s_dist
+                if step_name:
+                    break
+
+            name = f"Mile {int(mark_miles)} ({step_name})" if step_name else f"Mile {int(mark_miles)} Checkpoint"
+
+            # Proportional arrival time along route
+            if total_dist_meters > 0:
+                fraction = target_m / total_dist_meters
+                dur_sec = int(round(fraction * total_duration_sec))
+            else:
+                dur_sec = 0
+            arrival_dt = departure_dt + timedelta(seconds=dur_sec)
+
+            checkpoints.append({
+                "sequence": seq_num,
+                "name": name,
+                "latitude": round(interp_lat, 6),
+                "longitude": round(interp_lon, 6),
+                "estimated_arrival": arrival_dt.isoformat(),
+                "distance_from_origin_miles": round(mark_miles, 1),
+                "distance_from_origin_km": round(mark_miles * MILES_TO_KM, 1),
+                "duration_from_origin_seconds": dur_sec,
+                "weather": None,
+                "risk_level": "unknown",
+                "risk_summary": None,
+            })
+            seq_num += 1
 
         # 3. Final Destination Checkpoint
         final_arrival_dt = departure_dt + timedelta(seconds=total_duration_sec)
         checkpoints.append({
             "sequence": len(checkpoints) + 1,
             "name": f"Arrival: {dest_label}",
-            "latitude": dest_lat,
-            "longitude": dest_lon,
+            "latitude": round(dest_lat, 6),
+            "longitude": round(dest_lon, 6),
             "estimated_arrival": final_arrival_dt.isoformat(),
             "distance_from_origin_miles": round(total_dist_meters * 0.000621371, 1),
             "distance_from_origin_km": round(total_dist_meters / 1000.0, 1),

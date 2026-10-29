@@ -16,6 +16,7 @@ class BaseRouteEngine(ABC):
         destination: Dict[str, Any],
         departure_datetime: str,
         load_weight_lb: float,
+        checkpoint_interval_miles: int = 25,
     ) -> List[Dict[str, Any]]:
         """Calculate up to three candidate routes between origin and destination."""
         raise NotImplementedError("Route calculation engine is not yet implemented.")

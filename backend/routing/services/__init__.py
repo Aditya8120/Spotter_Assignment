@@ -15,6 +15,14 @@ from .mapbox import (
     MapboxNoRouteError,
     MapboxGeocodingError,
 )
+from .open_meteo import (
+    OpenMeteoWeatherService,
+    WeatherServiceError,
+    WeatherProviderError,
+    WeatherTimeoutError,
+    WeatherConnectionError,
+    WeatherRateLimitError,
+)
 
 __all__ = [
     "BaseRouteEngine",
@@ -29,4 +37,10 @@ __all__ = [
     "MapboxConnectionError",
     "MapboxNoRouteError",
     "MapboxGeocodingError",
+    "OpenMeteoWeatherService",
+    "WeatherServiceError",
+    "WeatherProviderError",
+    "WeatherTimeoutError",
+    "WeatherConnectionError",
+    "WeatherRateLimitError",
 ]

@@ -17,6 +17,7 @@ from .services import (
     MapboxConnectionError,
     MapboxNoRouteError,
     MapboxGeocodingError,
+    OpenMeteoWeatherService,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ def plan_routes(request):
 
     validated = serializer.validated_data
     departure_dt = validated['departure_datetime']
+    checkpoint_interval = validated.get('checkpoint_interval_miles', 25)
 
     try:
         routing_service = MapboxRoutingService()
@@ -60,7 +62,11 @@ def plan_routes(request):
             destination=validated['destination'],
             departure_datetime=departure_dt,
             load_weight_lb=validated['load_weight_lb'],
+            checkpoint_interval_miles=checkpoint_interval,
         )
+        # Fetch and attach weather forecasts for checkpoint arrival times
+        weather_service = OpenMeteoWeatherService()
+        weather_service.attach_weather_to_routes(routes)
     except MapboxConfigurationError as exc:
         logger.warning("Mapbox routing unconfigured: %s", exc)
         return Response(
@@ -155,15 +161,16 @@ def plan_routes(request):
     response_payload = {
         "status": "planned",
         "message": (
-            "Routes successfully calculated via Mapbox Directions API. Note: Routes reflect standard "
-            "driving directions and do not yet account for truck restrictions (height/weight limits), "
-            "weather hazards, or road closures."
+            "Routes successfully calculated via Mapbox Directions API with weather forecasts from Open-Meteo. "
+            "Note: Routes reflect standard driving directions and do not yet account for truck restrictions "
+            "(height/weight limits) or road closures."
         ),
         "request_summary": {
             "origin": validated['origin'],
             "destination": validated['destination'],
             "departure_datetime": departure_dt,
             "load_weight_lb": validated['load_weight_lb'],
+            "checkpoint_interval_miles": checkpoint_interval,
         },
         "routes": routes,
     }

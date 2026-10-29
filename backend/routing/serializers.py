@@ -149,6 +149,13 @@ class RoutePlanRequestSerializer(serializers.Serializer):
             'null': 'Load weight cannot be null.',
         }
     )
+    checkpoint_interval_miles = serializers.IntegerField(
+        required=False,
+        default=25,
+        error_messages={
+            'invalid': 'Checkpoint interval must be a valid integer in miles (10, 25, or 50).',
+        }
+    )
 
     def validate_load_weight_lb(self, value: float) -> float:
         if value <= 0:
@@ -160,6 +167,13 @@ class RoutePlanRequestSerializer(serializers.Serializer):
                 "Load weight exceeds maximum realistic limit of 250,000 lbs."
             )
         return float(value)
+
+    def validate_checkpoint_interval_miles(self, value: int) -> int:
+        if value not in (10, 25, 50):
+            raise serializers.ValidationError(
+                "Checkpoint interval must be 10, 25, or 50 miles."
+            )
+        return int(value)
 
     def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         origin = attrs.get('origin')
@@ -189,17 +203,39 @@ class RoutePlanRequestSerializer(serializers.Serializer):
 
 class WeatherObservationSerializer(serializers.Serializer):
     """Weather observations and units at a route checkpoint."""
+    timestamp = serializers.DateTimeField(allow_null=True, required=False)
+    forecast_timestamp = serializers.DateTimeField(allow_null=True, required=False)
+    data_availability = serializers.ChoiceField(
+        choices=['available', 'partial', 'unavailable', 'out_of_forecast_horizon'],
+        default='unavailable'
+    )
     temperature = serializers.FloatField(allow_null=True, required=False)
     condition = serializers.CharField(allow_null=True, required=False)
+    weather_code = serializers.IntegerField(allow_null=True, required=False)
     wind_speed_mph = serializers.FloatField(allow_null=True, required=False)
     wind_gust_mph = serializers.FloatField(allow_null=True, required=False)
     precipitation_probability = serializers.FloatField(allow_null=True, required=False)
+    precipitation_in_per_hour = serializers.FloatField(allow_null=True, required=False)
+    snowfall_in_per_hour = serializers.FloatField(allow_null=True, required=False)
+    precipitation_rate_in_per_hour = serializers.FloatField(allow_null=True, required=False)
+    snowfall_rate_in_per_hour = serializers.FloatField(allow_null=True, required=False)
+    precipitation_accumulation_in = serializers.FloatField(allow_null=True, required=False)
+    snowfall_accumulation_in = serializers.FloatField(allow_null=True, required=False)
     visibility_miles = serializers.FloatField(allow_null=True, required=False)
+    notes = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    limitations = serializers.ListField(
+        child=serializers.CharField(),
+        default=list,
+        required=False
+    )
     units = serializers.DictField(
         default=lambda: {
             "temperature": "°F",
             "wind_speed": "mph",
-            "precipitation": "%",
+            "wind_gust": "mph",
+            "precipitation": "in/h",
+            "snowfall": "in/h",
+            "precipitation_probability": "%",
             "visibility": "miles",
         },
         required=False
@@ -270,6 +306,7 @@ class RequestSummarySerializer(serializers.Serializer):
     destination = LocationField()
     departure_datetime = serializers.DateTimeField()
     load_weight_lb = serializers.FloatField()
+    checkpoint_interval_miles = serializers.IntegerField(default=25, required=False)
 
 
 class RoutePlanResponseSerializer(serializers.Serializer):
