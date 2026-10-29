@@ -649,88 +649,111 @@ To run recommendation tests specifically:
 
 ---
 
-## Frontend Setup (React + Vite)
+## Frontend Setup & Backend Integration (React + Django)
 
-The frontend is an enterprise logistics dispatch dashboard built with **React 19** and **Vite 8**, styled with custom **Vanilla CSS** design tokens and responsive grid layouts.
+The frontend is an enterprise logistics dispatch dashboard built with **React 19** and **Vite 8**, connected to the Django REST Framework backend API (`POST /api/routes/`).
 
-### 1. Component Structure
+### 1. Component & Service Structure
 
 ```text
 frontend/src/
+├── services/
+│   ├── api.js                     # API client service: payload construction, HTTP fetch, error normalization
+│   └── api.test.js                # Automated unit tests for API networking, error handling & payload builder
 ├── components/
-│   ├── Header.jsx                 # Top bar with branding, system status, and reset
-│   ├── RouteForm.jsx              # Form with origin, destination, schedule, weight tiers, presets, and validation
-│   ├── MapPlaceholder.jsx         # Dedicated Mapbox canvas placeholder with Step 9 integration notices
-│   ├── RouteCard.jsx              # Reusable route alternative card with risk metrics and recommendation explanation
-│   ├── RouteResults.jsx           # Results container managing empty states and route card grid
+│   ├── Header.jsx                 # Top navigation bar with branding, system status chips, and reset
+│   ├── RouteForm.jsx              # Form with inputs, client validation, weight tiers, presets & loading state
+│   ├── MapPlaceholder.jsx         # Dedicated Mapbox canvas placeholder with Step 10 integration notices
+│   ├── RouteCard.jsx              # Reusable route alternative card rendering real backend risk metrics
+│   ├── RouteResults.jsx           # Results container managing empty, loading, 503 pending setup & error states
 │   └── RiskThresholdReference.jsx # Collapsible logistics reference drawer with hazard thresholds and load rules
-├── App.jsx                        # Main logistics dashboard layout coordinating state
-├── App.css                        # Dashboard styles, grid, cards, badges, and responsive breakpoints
+├── App.jsx                        # Main logistics dashboard coordinating API requests and state
+├── App.css                        # Dashboard styles, status cards, spinners, and responsive breakpoints
 ├── index.css                      # Base design tokens, resets, typography (Inter + JetBrains Mono)
 └── main.jsx                       # Application entry point
 ```
 
-### 2. UI Features & Operational Workflow
+### 2. Frontend Environment Configuration
 
-- **Route Planning Form**:
-  - Origin and destination inputs (supporting city names or coordinates).
-  - Departure schedule picker (defaults to next morning 08:00 AM local).
-  - Load weight input with real-time tier classification (`Standard <= 30k lb`, `Heavy > 30k lb`, `Very Heavy > 40k lb`) and active load elevation rule notices.
-  - Checkpoint sampling interval selector (`10 mi`, `25 mi Default`, `50 mi`).
-  - One-click dispatch presets (e.g. *Chicago → Dallas*, *Denver → Salt Lake City*, *Seattle → Spokane*).
-- **Client-Side Form Validation**:
-  - Required field validation, date parseability check, and positive load weight bounds ($1$ to $250,000\text{ lb}$).
-  - Origin vs destination collision prevention.
-  - Inline error messages and highlighted input error states.
-- **Dedicated Map Canvas Placeholder**:
-  - Canvas with coordinate grid markings, compass rose, planned corridor indicator, and feature pills.
-  - Informative banner detailing the upcoming Mapbox GL JS vector lines, weather radar overlays, and interactive checkpoint popups.
-- **Evaluated Route Cards**:
-  - Displays up to 3 candidate routes with rank badges (`#1 Recommended`, `#2 Viable Alternative`, `#3 Not Recommended`).
-  - Metric breakdown: distance (mi/km), drive time, severe miles (Priority 1 metric), and average risk score.
-  - Multi-hazard mileage breakdown strip (Low, Moderate, High, Severe, No Travel).
-  - Human-readable recommendation explanation detailing hazard savings and travel time trade-offs.
-  - **Placeholder Notice**: Content is clearly labeled as demo/placeholder data representing the backend API response structure until live API communication is connected in Step 9.
-- **Collapsible Weather Hazard Reference Drawer**:
-  - Quick-reference table showing the exact wind, precipitation, and snowfall thresholds, plus truck weight elevation rules.
-- **Responsive Layout**:
-  - 2-column split desktop view (`420px` sidebar + flex main workspace).
-  - Stacked responsive view on tablet ($< 1100\text{px}$) and mobile ($< 768\text{px}$).
+Configure the backend API URL through `VITE_API_BASE_URL` in `frontend/.env` (defaults to `http://localhost:8000`):
 
-### 3. Frontend Commands & Verification
+```bash
+# In frontend/.env or root .env
+VITE_API_BASE_URL=http://localhost:8000
+```
 
-Navigate to the frontend directory:
+### 3. Running Both Servers Locally
+
+To run the complete full-stack application during local development, open two terminal windows:
+
+**Terminal 1 — Django Backend Server:**
+```bash
+cd backend
+source .venv/bin/activate
+python manage.py runserver 8000
+```
+Backend API will be live at: `http://localhost:8000/api/`
+
+**Terminal 2 — React Vite Frontend Server:**
 ```bash
 cd frontend
-```
-
-Install dependencies:
-```bash
-npm install
-```
-
-Start the Vite development server:
-```bash
 npm run dev
 ```
-The dashboard will be available at `http://localhost:5173/`.
+Frontend application will be live at: `http://localhost:5173/`
+
+### 4. API Integration Flow & State Governance
+
+The frontend interacts with the backend using the service module `frontend/src/services/api.js`:
+
+1. **Payload Serialization**:
+   - `buildRoutePlanPayload` converts form inputs to the exact Django schema:
+     - `origin`: string (text city or `"lat,lon"`)
+     - `destination`: string (text city or `"lat,lon"`)
+     - `departure_datetime`: ISO 8601 string (e.g. `2026-10-30T08:00:00.000Z`)
+     - `load_weight_lb`: float $> 0$
+     - `checkpoint_interval_miles`: integer ($10$, $25$, or $50$)
+2. **Distinct Lifecycle States**:
+   - **Initial Empty State**: Displays clear dispatch instructions before any request is made.
+   - **Loading State**: Disables form inputs, displays an animated loading spinner, and informs the operator that Mapbox geometries and Open-Meteo hourly forecasts are being processed. Duplicate clicks are blocked.
+   - **Backend Setup Pending State (HTTP 503 `provider_not_configured`)**: When the backend server does not yet have a Mapbox access token configured (`MAPBOX_ACCESS_TOKEN`), the frontend displays a helpful, informative setup banner detailing how to add the token to `backend/.env`.
+   - **Validation Error State (HTTP 400)**: Maps server-side field errors back to the respective form inputs and preserves entered values so the operator can adjust and retry.
+   - **Network Error State**: Displays clear troubleshooting instructions if the Django backend server is stopped or unreachable.
+   - **Successful Results State**: Renders real candidate routes returned by the backend with their exact rank, distance, duration, severe/high weather mileage, average risk score, and lexicographic recommendation rationale.
+3. **No Fake Demo Data**: All static placeholder route cards from Step 8 have been removed. Results are strictly driven by real backend API responses.
+
+### 5. Automated Frontend Testing & Verification
+
+Run the frontend test suite (10 tests covering payload construction, 200 OK responses, 503 unconfigured setup, 400 validation, 404 no route, network failures, and health check):
+```bash
+cd frontend
+npm test
+```
 
 Run linter checks:
 ```bash
+cd frontend
 npm run lint
 ```
 
 Build production bundle:
 ```bash
+cd frontend
 npm run build
+```
+
+Run full backend test suite (79 tests):
+```bash
+cd backend
+.venv/bin/python manage.py test
 ```
 
 ---
 
 ## Next Steps
 
-- **Step 9**: Connect React frontend to Django backend API (`POST /api/routes/`), integrate Mapbox GL JS interactive map canvas, draw route alternative polylines, and render checkpoint weather inspection popups.
+- **Step 10**: Integrate interactive Mapbox GL JS map canvas, render vector route polylines colored by weather risk severity, and add interactive checkpoint popups.
 - Interactive weather radar/heatmap layers and synchronized departure forecast slider.
+
 
 
 

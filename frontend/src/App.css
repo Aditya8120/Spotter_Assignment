@@ -1163,6 +1163,293 @@
 }
 
 /* =========================================================================
+   8b. Results Status Cards (Loading, Setup Pending, Error, Recommendation Summary)
+   ========================================================================= */
+.results-status-card {
+  padding: 36px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.status-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.status-description {
+  margin: 0;
+  max-width: 620px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Loading State Spinner */
+.status-spinner {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 4px solid rgba(59, 130, 246, 0.2);
+  border-top-color: #3b82f6;
+  animation: spin 0.8s linear infinite;
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.step-badge {
+  padding: 4px 10px;
+  background-color: var(--bg-card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  font-size: 11.5px;
+  color: #93c5fd;
+}
+
+/* Setup Pending State (HTTP 503) */
+.setup-pending-state {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, var(--bg-card) 100%);
+}
+
+.status-icon-circle {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setup-icon {
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+}
+
+.setup-badge-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.badge-setup-pending {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+}
+
+.setup-instructions-box {
+  margin-top: 8px;
+  text-align: left;
+  max-width: 620px;
+  width: 100%;
+  padding: 14px 18px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.instructions-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fbbf24;
+}
+
+.instructions-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.instructions-list code {
+  font-family: var(--font-mono);
+  background-color: var(--bg-card-subtle);
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: #93c5fd;
+}
+
+.instructions-list a {
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+/* Error State */
+.error-state {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.08) 0%, var(--bg-card) 100%);
+}
+
+.error-icon {
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.badge-error {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+
+.badge-success {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.5);
+}
+
+.error-troubleshoot-box {
+  margin-top: 8px;
+  text-align: left;
+  max-width: 620px;
+  width: 100%;
+  padding: 12px 16px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.error-troubleshoot-box strong {
+  color: #f87171;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.error-troubleshoot-box code {
+  display: block;
+  font-family: var(--font-mono);
+  background-color: var(--bg-card-subtle);
+  padding: 8px 10px;
+  border-radius: 4px;
+  margin-top: 6px;
+  color: #93c5fd;
+  word-break: break-all;
+}
+
+.error-troubleshoot-box ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+/* Recommendation Summary Card */
+.recommendation-summary-card {
+  padding: 18px 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.recommendation-summary-card.has-recommendation {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.08) 0%, var(--bg-card) 100%);
+}
+
+.recommendation-summary-card.all-unsafe {
+  border-color: rgba(220, 38, 38, 0.6);
+  background: linear-gradient(180deg, rgba(220, 38, 38, 0.12) 0%, var(--bg-card) 100%);
+}
+
+.summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.summary-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.summary-icon {
+  font-size: 20px;
+}
+
+.summary-heading {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.summary-narrative {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.summary-policies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+
+.policy-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.policy-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.policy-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.segmented-option.disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+
+/* =========================================================================
    9. Responsive Breakpoints
    ========================================================================= */
 @media (max-width: 1100px) {

@@ -64,7 +64,7 @@ export function RouteCard({ route, isSelected, onSelect }) {
           <span className="route-rank-number">#{rank}</span>
           <div>
             <h3 className="route-name">{display_name}</h3>
-            <span className="route-id-tag">{route_id} &bull; Demo Placeholder</span>
+            <span className="route-id-tag">{route_id} &bull; Mapbox &amp; Weather Assessed</span>
           </div>
         </div>
         <span className={`badge ${getRankBadgeClass()}`}>
@@ -76,27 +76,27 @@ export function RouteCard({ route, isSelected, onSelect }) {
       <div className="route-metrics-grid">
         <div className="metric-box">
           <span className="metric-label">Distance</span>
-          <span className="metric-value">{distance_miles.toFixed(1)} mi</span>
-          <span className="metric-sub">{distance_km.toFixed(1)} km</span>
+          <span className="metric-value">{distance_miles != null ? distance_miles.toFixed(1) : 'N/A'} mi</span>
+          <span className="metric-sub">{distance_km != null ? `${distance_km.toFixed(1)} km` : ''}</span>
         </div>
 
         <div className="metric-box">
           <span className="metric-label">Drive Time</span>
-          <span className="metric-value">{duration_formatted}</span>
+          <span className="metric-value">{duration_formatted || 'N/A'}</span>
           <span className="metric-sub">Est. Duration</span>
         </div>
 
         <div className="metric-box">
           <span className="metric-label">Severe Miles</span>
           <span className={`metric-value ${risk_assessment?.severe_risk_miles > 0 ? 'text-danger' : 'text-safe'}`}>
-            {risk_assessment?.severe_risk_miles.toFixed(1)} mi
+            {risk_assessment?.severe_risk_miles != null ? `${risk_assessment.severe_risk_miles.toFixed(1)} mi` : '0.0 mi'}
           </span>
           <span className="metric-sub">Priority 1 Metric</span>
         </div>
 
         <div className="metric-box">
           <span className="metric-label">Avg Risk Score</span>
-          <span className="metric-value">{risk_assessment?.risk_score?.toFixed(1) || 'N/A'}</span>
+          <span className="metric-value">{risk_assessment?.risk_score != null ? risk_assessment.risk_score.toFixed(1) : 'N/A'}</span>
           <span className="metric-sub">0–100 Scale</span>
         </div>
       </div>
@@ -105,24 +105,24 @@ export function RouteCard({ route, isSelected, onSelect }) {
       <div className="hazard-breakdown-strip">
         <div className="breakdown-item">
           <span className="color-dot dot-low"></span>
-          <span>Low: {risk_assessment?.low_risk_miles.toFixed(1)} mi</span>
+          <span>Low: {risk_assessment?.low_risk_miles != null ? risk_assessment.low_risk_miles.toFixed(1) : 0} mi</span>
         </div>
         <div className="breakdown-item">
           <span className="color-dot dot-mod"></span>
-          <span>Mod: {risk_assessment?.moderate_risk_miles.toFixed(1)} mi</span>
+          <span>Mod: {risk_assessment?.moderate_risk_miles != null ? risk_assessment.moderate_risk_miles.toFixed(1) : 0} mi</span>
         </div>
         <div className="breakdown-item">
           <span className="color-dot dot-high"></span>
-          <span>High: {risk_assessment?.high_risk_miles.toFixed(1)} mi</span>
+          <span>High: {risk_assessment?.high_risk_miles != null ? risk_assessment.high_risk_miles.toFixed(1) : 0} mi</span>
         </div>
         <div className="breakdown-item">
           <span className="color-dot dot-sev"></span>
-          <span>Sev: {risk_assessment?.severe_risk_miles.toFixed(1)} mi</span>
+          <span>Sev: {risk_assessment?.severe_risk_miles != null ? risk_assessment.severe_risk_miles.toFixed(1) : 0} mi</span>
         </div>
         {risk_assessment?.no_travel_miles > 0 && (
           <div className="breakdown-item text-danger">
             <span className="color-dot dot-notravel"></span>
-            <span>No Travel: {risk_assessment?.no_travel_miles.toFixed(1)} mi</span>
+            <span>No Travel: {risk_assessment.no_travel_miles.toFixed(1)} mi</span>
           </div>
         )}
       </div>
@@ -133,11 +133,7 @@ export function RouteCard({ route, isSelected, onSelect }) {
           {getRiskLevelBadge()}
           <span className="explanation-title">Recommendation Rationale:</span>
         </div>
-        <p className="explanation-text">{recommendation?.explanation}</p>
-      </div>
-
-      <div className="card-placeholder-footnote">
-        <span>⚙️ Demo Route Card &mdash; Live Mapbox &amp; Open-Meteo values connect in Step 9</span>
+        <p className="explanation-text">{recommendation?.explanation || 'No explanation provided.'}</p>
       </div>
     </article>
   )

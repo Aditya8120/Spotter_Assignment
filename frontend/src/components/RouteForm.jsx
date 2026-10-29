@@ -33,12 +33,12 @@ function getDefaultDateTime() {
   return new Date(tomorrow.getTime() - tzOffset).toISOString().slice(0, 16)
 }
 
-export function RouteForm({ onSubmit, isSubmitted }) {
-  const [origin, setOrigin] = useState('Chicago, IL')
-  const [destination, setDestination] = useState('Dallas, TX')
-  const [departureDatetime, setDepartureDatetime] = useState(getDefaultDateTime)
-  const [loadWeightLb, setLoadWeightLb] = useState('45000')
-  const [checkpointInterval, setCheckpointInterval] = useState(25)
+export function RouteForm({ onSubmit, isLoading = false, serverFieldErrors = {}, initialValues = {} }) {
+  const [origin, setOrigin] = useState(initialValues.origin || 'Chicago, IL')
+  const [destination, setDestination] = useState(initialValues.destination || 'Dallas, TX')
+  const [departureDatetime, setDepartureDatetime] = useState(initialValues.departureDatetime || getDefaultDateTime)
+  const [loadWeightLb, setLoadWeightLb] = useState((initialValues.loadWeightLb || 45000).toString())
+  const [checkpointInterval, setCheckpointInterval] = useState(initialValues.checkpointIntervalMiles || 25)
   const [errors, setErrors] = useState({})
   const [touched, setTouched] = useState({})
 
@@ -89,6 +89,8 @@ export function RouteForm({ onSubmit, isSubmitted }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
+    if (isLoading) return
+
     const validationErrors = validate()
     setErrors(validationErrors)
     setTouched({
@@ -118,6 +120,12 @@ export function RouteForm({ onSubmit, isSubmitted }) {
     setErrors({})
   }
 
+  const getFieldError = (field) => {
+    if (touched[field] && errors[field]) return errors[field]
+    if (serverFieldErrors[field]) return serverFieldErrors[field]
+    return null
+  }
+
   return (
     <div className="card route-form-card">
       <div className="card-header">
@@ -137,6 +145,7 @@ export function RouteForm({ onSubmit, isSubmitted }) {
             <button
               key={idx}
               type="button"
+              disabled={isLoading}
               className="btn-preset"
               onClick={() => handleApplyPreset(p)}
               title={`Load ${p.origin} to ${p.destination}`}
@@ -149,7 +158,7 @@ export function RouteForm({ onSubmit, isSubmitted }) {
 
       <form onSubmit={handleSubmit} noValidate className="form-body">
         {/* Origin */}
-        <div className={`form-group ${errors.origin && touched.origin ? 'has-error' : ''}`}>
+        <div className={`form-group ${getFieldError('origin') ? 'has-error' : ''}`}>
           <label htmlFor="origin" className="form-label">
             Origin Location <span className="required-star">*</span>
           </label>
@@ -158,6 +167,7 @@ export function RouteForm({ onSubmit, isSubmitted }) {
             <input
               id="origin"
               type="text"
+              disabled={isLoading}
               className="form-input"
               placeholder="e.g. Chicago, IL or 41.8781, -87.6298"
               value={origin}
@@ -169,13 +179,13 @@ export function RouteForm({ onSubmit, isSubmitted }) {
               required
             />
           </div>
-          {errors.origin && touched.origin && (
-            <p className="field-error" role="alert">{errors.origin}</p>
+          {getFieldError('origin') && (
+            <p className="field-error" role="alert">{getFieldError('origin')}</p>
           )}
         </div>
 
         {/* Destination */}
-        <div className={`form-group ${errors.destination && touched.destination ? 'has-error' : ''}`}>
+        <div className={`form-group ${getFieldError('destination') ? 'has-error' : ''}`}>
           <label htmlFor="destination" className="form-label">
             Destination Location <span className="required-star">*</span>
           </label>
@@ -184,6 +194,7 @@ export function RouteForm({ onSubmit, isSubmitted }) {
             <input
               id="destination"
               type="text"
+              disabled={isLoading}
               className="form-input"
               placeholder="e.g. Dallas, TX or 32.7767, -96.7970"
               value={destination}
@@ -195,13 +206,13 @@ export function RouteForm({ onSubmit, isSubmitted }) {
               required
             />
           </div>
-          {errors.destination && touched.destination && (
-            <p className="field-error" role="alert">{errors.destination}</p>
+          {getFieldError('destination') && (
+            <p className="field-error" role="alert">{getFieldError('destination')}</p>
           )}
         </div>
 
         {/* Departure Date and Time */}
-        <div className={`form-group ${errors.departureDatetime && touched.departureDatetime ? 'has-error' : ''}`}>
+        <div className={`form-group ${getFieldError('departure_datetime') || getFieldError('departureDatetime') ? 'has-error' : ''}`}>
           <label htmlFor="departureDatetime" className="form-label">
             Departure Date & Time (Local) <span className="required-star">*</span>
           </label>
@@ -210,6 +221,7 @@ export function RouteForm({ onSubmit, isSubmitted }) {
             <input
               id="departureDatetime"
               type="datetime-local"
+              disabled={isLoading}
               className="form-input"
               value={departureDatetime}
               onChange={(e) => {
@@ -220,14 +232,14 @@ export function RouteForm({ onSubmit, isSubmitted }) {
               required
             />
           </div>
-          {errors.departureDatetime && touched.departureDatetime && (
-            <p className="field-error" role="alert">{errors.departureDatetime}</p>
+          {(getFieldError('departure_datetime') || getFieldError('departureDatetime')) && (
+            <p className="field-error" role="alert">{getFieldError('departure_datetime') || getFieldError('departureDatetime')}</p>
           )}
           <span className="form-helper">Weather is evaluated at each checkpoint's estimated arrival time.</span>
         </div>
 
         {/* Truck Load Weight */}
-        <div className={`form-group ${errors.loadWeightLb && touched.loadWeightLb ? 'has-error' : ''}`}>
+        <div className={`form-group ${getFieldError('load_weight_lb') || getFieldError('loadWeightLb') ? 'has-error' : ''}`}>
           <div className="label-with-weight-tier">
             <label htmlFor="loadWeightLb" className="form-label">
               Load Weight (Pounds) <span className="required-star">*</span>
@@ -248,6 +260,7 @@ export function RouteForm({ onSubmit, isSubmitted }) {
               step="500"
               min="1"
               max="250000"
+              disabled={isLoading}
               className="form-input"
               placeholder="e.g. 45000"
               value={loadWeightLb}
@@ -260,8 +273,8 @@ export function RouteForm({ onSubmit, isSubmitted }) {
             />
             <span className="input-suffix">lb</span>
           </div>
-          {errors.loadWeightLb && touched.loadWeightLb && (
-            <p className="field-error" role="alert">{errors.loadWeightLb}</p>
+          {(getFieldError('load_weight_lb') || getFieldError('loadWeightLb')) && (
+            <p className="field-error" role="alert">{getFieldError('load_weight_lb') || getFieldError('loadWeightLb')}</p>
           )}
           <span className="form-helper">
             {parseFloat(loadWeightLb) > 40000
@@ -281,12 +294,13 @@ export function RouteForm({ onSubmit, isSubmitted }) {
             {[10, 25, 50].map((interval) => (
               <label
                 key={interval}
-                className={`segmented-option ${Number(checkpointInterval) === interval ? 'selected' : ''}`}
+                className={`segmented-option ${Number(checkpointInterval) === interval ? 'selected' : ''} ${isLoading ? 'disabled' : ''}`}
               >
                 <input
                   type="radio"
                   name="checkpointInterval"
                   value={interval}
+                  disabled={isLoading}
                   checked={Number(checkpointInterval) === interval}
                   onChange={() => setCheckpointInterval(interval)}
                 />
@@ -300,25 +314,25 @@ export function RouteForm({ onSubmit, isSubmitted }) {
         {/* Action Button */}
         <button
           type="submit"
+          disabled={isLoading}
           className="btn-primary btn-block btn-lg"
           id="find-routes-btn"
         >
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          <span>Find Routes &amp; Analyze Weather</span>
+          {isLoading ? (
+            <>
+              <span className="btn-spinner" aria-hidden="true"></span>
+              <span>Calculating Routes &amp; Weather...</span>
+            </>
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <span>Find Routes &amp; Analyze Weather</span>
+            </>
+          )}
         </button>
-
-        {isSubmitted && (
-          <div className="form-demo-notice">
-            <span className="notice-icon">ℹ️</span>
-            <div>
-              <strong>Form Validated Successfully (Demo State)</strong>
-              <p>Form parameters have been processed. Demo route options are shown in the results area below. Backend API &amp; Mapbox connection occurs in Step 9.</p>
-            </div>
-          </div>
-        )}
       </form>
     </div>
   )
