@@ -33,11 +33,26 @@ from .risk_scoring import (
     RISK_LEVEL_NO_TRAVEL,
     RISK_LEVEL_UNKNOWN,
 )
+from .recommendation_engine import BaseRecommendationEngine
+from .recommendation import (
+    RouteRecommendationService,
+    STATUS_RECOMMENDED,
+    STATUS_VIABLE_ALTERNATIVE,
+    STATUS_NOT_RECOMMENDED,
+    STATUS_PENDING,
+    ELIGIBILITY_ELIGIBLE,
+    ELIGIBILITY_NO_TRAVEL,
+    ELIGIBILITY_INCOMPLETE,
+    ASSESSMENT_COMPLETE,
+    ASSESSMENT_PARTIAL,
+    ASSESSMENT_UNAVAILABLE,
+)
 
 __all__ = [
     "BaseRouteEngine",
     "BaseWeatherEngine",
     "BaseRiskEngine",
+    "BaseRecommendationEngine",
     "MapboxRoutingService",
     "MapboxServiceError",
     "MapboxConfigurationError",
@@ -61,4 +76,15 @@ __all__ = [
     "RISK_LEVEL_SEVERE",
     "RISK_LEVEL_NO_TRAVEL",
     "RISK_LEVEL_UNKNOWN",
+    "RouteRecommendationService",
+    "STATUS_RECOMMENDED",
+    "STATUS_VIABLE_ALTERNATIVE",
+    "STATUS_NOT_RECOMMENDED",
+    "STATUS_PENDING",
+    "ELIGIBILITY_ELIGIBLE",
+    "ELIGIBILITY_NO_TRAVEL",
+    "ELIGIBILITY_INCOMPLETE",
+    "ASSESSMENT_COMPLETE",
+    "ASSESSMENT_PARTIAL",
+    "ASSESSMENT_UNAVAILABLE",
 ]

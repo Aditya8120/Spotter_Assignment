@@ -19,6 +19,7 @@ from .services import (
     MapboxGeocodingError,
     OpenMeteoWeatherService,
     WeatherRiskService,
+    RouteRecommendationService,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,11 @@ def plan_routes(request):
         # Evaluate and attach weather hazard risk assessments based on load weight
         risk_service = WeatherRiskService()
         risk_service.attach_risk_to_routes(routes, load_weight_lb=validated['load_weight_lb'])
+
+        # Lexicographically rank routes and attach safety recommendations
+        recommendation_service = RouteRecommendationService()
+        routes = recommendation_service.rank_routes(routes)
+        recommendation_summary = recommendation_service.build_recommendation_summary(routes)
     except MapboxConfigurationError as exc:
         logger.warning("Mapbox routing unconfigured: %s", exc)
         return Response(
@@ -166,9 +172,10 @@ def plan_routes(request):
     response_payload = {
         "status": "planned",
         "message": (
-            "Routes successfully calculated via Mapbox Directions API with weather forecasts from Open-Meteo "
-            "and load-specific weather hazard risk assessments. Note: Routes reflect standard driving directions "
-            "and do not yet account for truck height/weight limits or road closures."
+            "Routes successfully calculated via Mapbox Directions API with weather forecasts from Open-Meteo, "
+            "load-specific weather hazard risk assessments, and lexicographic safety recommendations. "
+            "Note: Routes reflect standard driving directions and do not yet account for truck height/weight "
+            "limits or road closures."
         ),
         "request_summary": {
             "origin": validated['origin'],
@@ -178,6 +185,7 @@ def plan_routes(request):
             "checkpoint_interval_miles": checkpoint_interval,
         },
         "routes": routes,
+        "recommendation_summary": recommendation_summary,
     }
 
     response_serializer = RoutePlanResponseSerializer(instance=response_payload)

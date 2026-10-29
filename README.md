@@ -523,14 +523,96 @@ High winds exert severe aerodynamic tipping forces on commercial tractor-trailer
         ]
       },
       "recommendation": {
+        "rank": 1,
         "is_recommended": true,
         "status": "recommended",
-        "explanation": "Primary route recommended by Mapbox based on shortest duration and road classification. Note: Reflects standard passenger driving profile; truck height/weight limits and weather conditions are not yet accounted for."
+        "explanation": "Recommended as safest route: avoids all severe and high-risk weather hazards, average risk score: 10.0, travel time: 14h 0m.",
+        "eligibility": "eligible",
+        "assessment_status": "complete",
+        "ranking_metrics": {
+          "severe_risk_miles": 0.0,
+          "high_risk_miles": 0.0,
+          "average_risk_score": 10.0,
+          "duration_seconds": 50400,
+          "duration_formatted": "14h 0m",
+          "no_travel_miles": 0.0,
+          "no_travel_segments_count": 0,
+          "unknown_risk_miles": 0.0
+        }
       }
     }
-  ]
+  ],
+  "recommendation_summary": {
+    "recommended_route_id": "mapbox-route-1",
+    "all_routes_unsafe": false,
+    "incomplete_data_warning": false,
+    "total_options_evaluated": 2,
+    "ranking_priority": [
+      "1. Fewest miles classified as Severe",
+      "2. Fewest miles classified as High",
+      "3. Lowest average risk score",
+      "4. Shortest travel time"
+    ],
+    "safety_policy": "Routes containing any No Travel segments are strictly ineligible for recommendation when safe alternatives exist. If every available route contains a No Travel segment, the engine flags that no route is considered safe and advises postponing departure.",
+    "data_quality_policy": "Routes with incomplete or unavailable weather forecasts are never silently treated as safer than fully assessed routes. Unassessed segments are flagged, and incomplete routes cannot be recommended if safe, fully assessed routes are available.",
+    "executive_summary": "Route 'Primary Route (via I-55 S, I-30 W)' is recommended as the safest route. Recommended as safest route: avoids all severe and high-risk weather hazards, average risk score: 10.0, travel time: 14h 0m."
+  }
 }
 ```
+
+---
+
+## Route Recommendation and Ranking Engine
+
+The backend includes a dedicated, modular recommendation service (`RouteRecommendationService` in `backend/routing/services/recommendation.py`, implementing `BaseRecommendationEngine`). It evaluates all available route options and ranks them lexicographically by safety and efficiency.
+
+### 1. Lexicographic Ranking Priority
+
+Route options are ordered strictly using the following 4-stage lexicographic hierarchy:
+
+| Priority | Criterion | Metric Field | Sort Order | Rationale |
+| :--- | :--- | :--- | :--- | :--- |
+| **1st** | Fewest miles classified as Severe | `severe_risk_miles` | Ascending (lower is better) | Primary priority: minimize exposure to dangerous storm, snow, and wind conditions. |
+| **2nd** | Fewest miles classified as High | `high_risk_miles` | Ascending (lower is better) | Secondary priority: among routes with equal severe miles, minimize high-risk segments. |
+| **3rd** | Lowest average risk score | `risk_score` | Ascending (lower is better) | Tertiary priority: among routes with equal severe and high miles, minimize overall route hazard exposure. |
+| **4th** | Shortest travel time | `duration_seconds` | Ascending (faster is better) | Efficiency tie-breaker: among routes with identical weather risk profiles, pick the fastest path. |
+
+> **Strict Lexicographic Guarantee**: Criteria are evaluated sequentially without weighted averaging, ensuring a lower-priority criterion (e.g. faster driving time or lower moderate risk) can **never** override a higher-priority safety criterion (e.g. avoiding severe weather).
+
+### 2. Safety Constraint for No Travel Segments
+
+- **Eligibility Segregation**: Any route encountering a **No Travel** segment (`no_travel_miles > 0` or `no_travel_segments_count > 0` or `no_travel_warning = True`) is classified as `eligibility: "no_travel_hazard"`.
+- **Ineligibility When Safe Routes Exist**: A route containing No Travel conditions is strictly prohibited from being recommended (`is_recommended = false`, `status = "not_recommended"`) when any route without No Travel segments is available.
+- **All-Unsafe Detection**: If **every** available route option contains a No Travel segment:
+  - The top-level summary sets `all_routes_unsafe: true` and `recommended_route_id: null`.
+  - Every route is flagged with `is_recommended: false` and `status: "not_recommended"`.
+  - Routes are ordered among themselves by minimizing extreme danger exposure (`no_travel_miles`), then applying the 4 assignment criteria.
+  - The executive summary issues a critical alert: *"NO SAFE ROUTE AVAILABLE: All route options encounter extreme weather with No Travel advisories. Driving is unsafe and prohibited under carrier safety standards."*
+
+### 3. Incomplete & Missing Weather Data Governance
+
+- **Prudent Safety Tiering**: Routes are partitioned into safety tiers:
+  - **Tier 0 (Eligible)**: Fully assessed, 0 No Travel miles.
+  - **Tier 1 (Incomplete)**: Partial or unavailable weather forecasts (`data_quality: "partial" | "unavailable"`), 0 No Travel miles.
+  - **Tier 2 (Hazardous)**: Contains No Travel segments.
+- **Never Treated as Safer**: Because Tier 0 routes sort ahead of Tier 1 routes, a route with missing weather forecasts is **never** silently treated as safer than a fully assessed route (e.g. missing sensors cannot masquerade as 0 severe miles to beat a complete assessment).
+- **Assessment Status**: Each route includes `assessment_status: "complete" | "partial" | "unavailable"`. When all routes have incomplete forecasts, the fastest route is highlighted with an explicit warning caveat (`incomplete_data_warning: true`).
+
+### 4. Deterministic Tie-Breaking
+
+When all four criteria (severe miles, high miles, average risk score, duration) are strictly identical:
+- Ordering is deterministically broken using route identifier (`route_id`) and sequence index.
+- Multiple runs on the same input produce 100% reproducible rankings.
+
+### 5. Recommendation Explanation Format
+
+Each route receives a tailored human-readable explanation:
+- **Recommended Route (Rank 1)**: Highlights why the route was chosen (e.g. *"Recommended as safest route: avoids all severe and high-risk weather hazards, average risk score: 10.0, travel time: 14h 0m"*).
+- **Viable Alternatives (Rank 2+)**: Notes safety clearance and describes comparative trade-offs relative to Rank 1 (e.g. *"+15 min travel time vs Recommended Route"* or *"+4.5 mi high-risk weather"*).
+- **No Travel Warnings**: Highlights segment counts and prohibited travel advisories (e.g. *"NOT RECOMMENDED (Rank 2): Route violates critical safety policy with 6.5 miles of No Travel conditions across 1 segment(s)"*).
+- **Incomplete Data Warnings**: Warns of unassessed mileage where forecasts could not be verified.
+
+---
 
 #### Example Usage
 
@@ -546,6 +628,23 @@ curl -i -X POST http://127.0.0.1:8000/api/routes/ \
     "load_weight_lb": 45000.0,
     "checkpoint_interval_miles": 25
   }'
+```
+
+---
+
+## Automated Testing
+
+Run the full automated test suite (79 tests) with zero external network dependencies or credentials:
+
+```bash
+cd backend
+.venv/bin/python manage.py test
+```
+
+To run recommendation tests specifically:
+```bash
+.venv/bin/python manage.py test routing.tests.RouteRecommendationServiceTests
+.venv/bin/python manage.py test routing.tests.RoutePlanningRecommendationIntegrationTests
 ```
 
 ---
@@ -577,8 +676,10 @@ npm run build
 
 ## Next Steps
 
-- Route ranking and recommendation algorithm (ranking candidate routes by safety and weather severity)
-- Interactive map UI and route visualization with weather heatmap layer
+- Frontend user interface (route input form, origin/destination geocoding, vehicle configuration)
+- Interactive Mapbox GL JS map visualization with route alternatives and weather hazard overlays
+- Weather risk heatmap layers and checkpoint inspection popups
+
 
 
 

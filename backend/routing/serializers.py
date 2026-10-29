@@ -266,12 +266,16 @@ class CheckpointSerializer(serializers.Serializer):
 
 class RouteRecommendationSerializer(serializers.Serializer):
     """Route recommendation status and explanation."""
+    rank = serializers.IntegerField(allow_null=True, required=False)
     is_recommended = serializers.BooleanField(default=False)
     status = serializers.ChoiceField(
         choices=['recommended', 'viable_alternative', 'not_recommended', 'pending'],
         default='pending'
     )
     explanation = serializers.CharField(allow_blank=True)
+    eligibility = serializers.CharField(allow_null=True, required=False)
+    assessment_status = serializers.CharField(allow_null=True, required=False)
+    ranking_metrics = serializers.DictField(allow_null=True, required=False)
 
 
 class RiskAssessmentSerializer(serializers.Serializer):
@@ -307,6 +311,7 @@ class RouteOptionSerializer(serializers.Serializer):
     """Representation of an individual route option (up to 3 per response)."""
     route_id = serializers.CharField()
     display_name = serializers.CharField()
+    rank = serializers.IntegerField(allow_null=True, required=False)
     distance_miles = serializers.FloatField(allow_null=True, required=False)
     distance_km = serializers.FloatField(allow_null=True, required=False)
     duration_seconds = serializers.IntegerField(allow_null=True)
@@ -334,6 +339,7 @@ class RoutePlanResponseSerializer(serializers.Serializer):
     message = serializers.CharField()
     request_summary = RequestSummarySerializer()
     routes = RouteOptionSerializer(many=True, default=list)
+    recommendation_summary = serializers.DictField(allow_null=True, required=False)
 
     def validate_routes(self, routes: list) -> list:
         if len(routes) > 3:

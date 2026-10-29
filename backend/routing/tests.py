@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 import json
 from unittest.mock import MagicMock, patch
 from django.urls import reverse
@@ -32,7 +33,18 @@ from .services import (
     RISK_LEVEL_SEVERE,
     RISK_LEVEL_NO_TRAVEL,
     RISK_LEVEL_UNKNOWN,
+    RouteRecommendationService,
+    STATUS_RECOMMENDED,
+    STATUS_VIABLE_ALTERNATIVE,
+    STATUS_NOT_RECOMMENDED,
+    ELIGIBILITY_ELIGIBLE,
+    ELIGIBILITY_NO_TRAVEL,
+    ELIGIBILITY_INCOMPLETE,
+    ASSESSMENT_COMPLETE,
+    ASSESSMENT_PARTIAL,
+    ASSESSMENT_UNAVAILABLE,
 )
+from django.test import SimpleTestCase
 
 
 def mock_open_meteo_forecast(
@@ -1665,6 +1677,549 @@ class RoutePlanningRiskIntegrationTests(APITestCase):
         self.assertGreater(assessment["severe_risk_miles"], 0.0)
         self.assertIn("SEVERE RISK", assessment["summary"])
         self.assertIn("assumptions", assessment)
+
+
+def make_test_route(
+    route_id: str,
+    display_name: str,
+    duration_seconds: int,
+    distance_miles: float,
+    severe_risk_miles: float = 0.0,
+    high_risk_miles: float = 0.0,
+    moderate_risk_miles: float = 0.0,
+    low_risk_miles: float = 0.0,
+    no_travel_miles: float = 0.0,
+    unknown_risk_miles: float = 0.0,
+    no_travel_segments_count: int = 0,
+    risk_score: Optional[float] = 20.0,
+    data_quality: str = "available",
+) -> Dict[str, Any]:
+    """Helper to construct realistic mock route objects with attached risk assessments."""
+    return {
+        "route_id": route_id,
+        "display_name": display_name,
+        "distance_miles": distance_miles,
+        "distance_km": round(distance_miles * 1.60934, 1),
+        "duration_seconds": duration_seconds,
+        "duration_formatted": f"{duration_seconds // 3600}h {(duration_seconds % 3600) // 60}m",
+        "geometry": {"type": "LineString", "coordinates": []},
+        "checkpoints": [],
+        "weather_summary": {},
+        "risk_assessment": {
+            "overall_risk_level": (
+                RISK_LEVEL_NO_TRAVEL if no_travel_miles > 0
+                else RISK_LEVEL_SEVERE if severe_risk_miles > 0
+                else RISK_LEVEL_HIGH if high_risk_miles > 0
+                else RISK_LEVEL_MODERATE if moderate_risk_miles > 0
+                else RISK_LEVEL_LOW if unknown_risk_miles == 0
+                else RISK_LEVEL_UNKNOWN
+            ),
+            "risk_score": risk_score,
+            "risk_factors": [],
+            "summary": "Mock route risk summary",
+            "total_distance_miles": distance_miles,
+            "low_risk_miles": low_risk_miles,
+            "moderate_risk_miles": moderate_risk_miles,
+            "high_risk_miles": high_risk_miles,
+            "severe_risk_miles": severe_risk_miles,
+            "no_travel_miles": no_travel_miles,
+            "unknown_risk_miles": unknown_risk_miles,
+            "no_travel_segments_count": no_travel_segments_count,
+            "no_travel_warning": (no_travel_segments_count > 0 or no_travel_miles > 0),
+            "data_quality": data_quality,
+            "assumptions": [],
+        },
+        "recommendation": {
+            "is_recommended": False,
+            "status": "pending",
+            "explanation": "",
+        },
+    }
+
+
+class RouteRecommendationServiceTests(SimpleTestCase):
+    """
+    Automated unit tests for RouteRecommendationService verifying:
+    - Independent ranking criteria (1. Severe miles, 2. High miles, 3. Avg score, 4. Duration)
+    - Tie-breaking across all four criteria
+    - Safety constraint for No Travel segments (route with No Travel vs without)
+    - All routes containing No Travel segments
+    - Incomplete / missing weather data handling
+    - Stable, deterministic ordering
+    - Empty and single-route edge cases
+    """
+
+    def setUp(self):
+        self.service = RouteRecommendationService()
+
+    def test_ranking_criterion_1_fewest_severe_miles(self):
+        """
+        Criterion 1: Fewest miles classified as Severe strictly decides ranking,
+        even if the alternative has fewer high miles, lower average risk, and faster travel time.
+        """
+        route_a = make_test_route(
+            route_id="route_a",
+            display_name="Route A (Zero Severe)",
+            duration_seconds=20000,
+            distance_miles=200.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=25.0,
+            risk_score=40.0,
+        )
+        route_b = make_test_route(
+            route_id="route_b",
+            display_name="Route B (Fast but 10 Severe Miles)",
+            duration_seconds=12000,
+            distance_miles=180.0,
+            severe_risk_miles=10.0,
+            high_risk_miles=0.0,
+            risk_score=25.0,
+        )
+
+        ranked = self.service.rank_routes([route_b, route_a])
+
+        self.assertEqual(len(ranked), 2)
+        # Route A must be ranked #1 because severe_risk_miles is 0.0 vs 10.0
+        self.assertEqual(ranked[0]["route_id"], "route_a")
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[0]["recommendation"]["status"], STATUS_RECOMMENDED)
+
+        self.assertEqual(ranked[1]["route_id"], "route_b")
+        self.assertEqual(ranked[1]["rank"], 2)
+        self.assertFalse(ranked[1]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["recommendation"]["status"], STATUS_VIABLE_ALTERNATIVE)
+
+    def test_ranking_criterion_2_fewest_high_risk_miles(self):
+        """
+        Criterion 2: When severe miles are tied, fewest miles classified as High
+        decides ranking, overriding lower average score and shorter travel time.
+        """
+        route_a = make_test_route(
+            route_id="route_a",
+            display_name="Route A (Fewer High Miles)",
+            duration_seconds=18000,
+            distance_miles=200.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=5.0,
+            risk_score=35.0,
+        )
+        route_b = make_test_route(
+            route_id="route_b",
+            display_name="Route B (More High Miles)",
+            duration_seconds=11000,
+            distance_miles=180.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=18.0,
+            risk_score=25.0,
+        )
+
+        ranked = self.service.rank_routes([route_b, route_a])
+
+        self.assertEqual(ranked[0]["route_id"], "route_a")
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["route_id"], "route_b")
+        self.assertEqual(ranked[1]["rank"], 2)
+
+    def test_ranking_criterion_3_lowest_average_risk_score(self):
+        """
+        Criterion 3: When severe and high miles are tied, lowest average risk score
+        decides ranking, overriding shorter travel time.
+        """
+        route_a = make_test_route(
+            route_id="route_a",
+            display_name="Route A (Lower Average Score)",
+            duration_seconds=16000,
+            distance_miles=200.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=0.0,
+            risk_score=15.0,
+        )
+        route_b = make_test_route(
+            route_id="route_b",
+            display_name="Route B (Faster but Higher Average Score)",
+            duration_seconds=12000,
+            distance_miles=190.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=0.0,
+            risk_score=32.0,
+        )
+
+        ranked = self.service.rank_routes([route_b, route_a])
+
+        self.assertEqual(ranked[0]["route_id"], "route_a")
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["route_id"], "route_b")
+        self.assertEqual(ranked[1]["rank"], 2)
+
+    def test_ranking_criterion_4_shortest_travel_time(self):
+        """
+        Criterion 4: When severe miles, high miles, and average risk score are all tied,
+        shortest travel time (duration_seconds) decides ranking.
+        """
+        route_fast = make_test_route(
+            route_id="route_fast",
+            display_name="Route Fast",
+            duration_seconds=10800,  # 3h 0m
+            distance_miles=180.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=0.0,
+            risk_score=12.0,
+        )
+        route_slow = make_test_route(
+            route_id="route_slow",
+            display_name="Route Slow",
+            duration_seconds=14400,  # 4h 0m
+            distance_miles=185.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=0.0,
+            risk_score=12.0,
+        )
+
+        ranked = self.service.rank_routes([route_slow, route_fast])
+
+        self.assertEqual(ranked[0]["route_id"], "route_fast")
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["route_id"], "route_slow")
+        self.assertEqual(ranked[1]["rank"], 2)
+
+    def test_tie_breaking_across_all_four_criteria_is_deterministic(self):
+        """
+        When all four criteria are strictly identical, ranking must be stable
+        and deterministic using route_id and sequence.
+        """
+        route_1 = make_test_route("route_c", "Route C", 12000, 150.0, 0.0, 0.0, risk_score=10.0)
+        route_2 = make_test_route("route_a", "Route A", 12000, 150.0, 0.0, 0.0, risk_score=10.0)
+        route_3 = make_test_route("route_b", "Route B", 12000, 150.0, 0.0, 0.0, risk_score=10.0)
+
+        # Run multiple times with different initial list orders
+        ranked_first = self.service.rank_routes([route_1, route_2, route_3])
+        ranked_second = self.service.rank_routes([route_3, route_1, route_2])
+
+        order_first = [r["route_id"] for r in ranked_first]
+        order_second = [r["route_id"] for r in ranked_second]
+
+        self.assertEqual(order_first, ["route_a", "route_b", "route_c"])
+        self.assertEqual(order_second, ["route_a", "route_b", "route_c"])
+
+    def test_no_travel_risk_vs_route_without_it(self):
+        """
+        Requirement 5: A route containing a No Travel segment must not be recommended
+        as the safest route when a route without No Travel segments is available.
+        """
+        route_safe = make_test_route(
+            route_id="route_safe",
+            display_name="Route Safe (Severe but No Travel free)",
+            duration_seconds=22000,
+            distance_miles=250.0,
+            severe_risk_miles=15.0,
+            high_risk_miles=10.0,
+            no_travel_miles=0.0,
+            no_travel_segments_count=0,
+            risk_score=65.0,
+        )
+        route_no_travel = make_test_route(
+            route_id="route_no_travel",
+            display_name="Route Unsafe (Fast but has No Travel segment)",
+            duration_seconds=9000,
+            distance_miles=150.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=0.0,
+            no_travel_miles=6.5,
+            no_travel_segments_count=1,
+            risk_score=85.0,
+        )
+
+        ranked = self.service.rank_routes([route_no_travel, route_safe])
+
+        # Route Safe must be Rank 1 and recommended
+        self.assertEqual(ranked[0]["route_id"], "route_safe")
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[0]["recommendation"]["status"], STATUS_RECOMMENDED)
+        self.assertEqual(ranked[0]["recommendation"]["eligibility"], ELIGIBILITY_ELIGIBLE)
+
+        # Route No Travel must be Rank 2, NOT recommended, and flagged
+        self.assertEqual(ranked[1]["route_id"], "route_no_travel")
+        self.assertEqual(ranked[1]["rank"], 2)
+        self.assertFalse(ranked[1]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["recommendation"]["status"], STATUS_NOT_RECOMMENDED)
+        self.assertEqual(ranked[1]["recommendation"]["eligibility"], ELIGIBILITY_NO_TRAVEL)
+        self.assertIn("NOT RECOMMENDED", ranked[1]["recommendation"]["explanation"])
+        self.assertIn("6.5 miles of No Travel", ranked[1]["recommendation"]["explanation"])
+
+    def test_every_route_contains_no_travel_segments(self):
+        """
+        Requirement 5: If every route contains a No Travel segment, clearly flag
+        that no route is considered safe and explain why.
+        """
+        route_1 = make_test_route(
+            route_id="route_1",
+            display_name="Route 1",
+            duration_seconds=12000,
+            distance_miles=200.0,
+            no_travel_miles=4.0,
+            no_travel_segments_count=1,
+        )
+        route_2 = make_test_route(
+            route_id="route_2",
+            display_name="Route 2",
+            duration_seconds=11000,
+            distance_miles=190.0,
+            no_travel_miles=12.5,
+            no_travel_segments_count=2,
+        )
+
+        ranked = self.service.rank_routes([route_1, route_2])
+        summary = self.service.build_recommendation_summary(ranked)
+
+        # Neither route may be marked recommended
+        self.assertFalse(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[0]["recommendation"]["status"], STATUS_NOT_RECOMMENDED)
+        self.assertFalse(ranked[1]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["recommendation"]["status"], STATUS_NOT_RECOMMENDED)
+
+        # Ranked by fewest No Travel miles (4.0 < 12.5)
+        self.assertEqual(ranked[0]["route_id"], "route_1")
+        self.assertEqual(ranked[1]["route_id"], "route_2")
+
+        # Top-level summary flags all routes unsafe
+        self.assertTrue(summary["all_routes_unsafe"])
+        self.assertIsNone(summary["recommended_route_id"])
+        self.assertIn("NO SAFE ROUTE AVAILABLE", summary["executive_summary"])
+
+    def test_incomplete_weather_data_never_silently_beats_fully_assessed_route(self):
+        """
+        Requirement 6: A route with unknown risk must not silently be treated
+        as safer than a fully assessed route.
+        """
+        route_complete = make_test_route(
+            route_id="route_complete",
+            display_name="Route Complete Assessment",
+            duration_seconds=18000,
+            distance_miles=200.0,
+            severe_risk_miles=2.0,
+            high_risk_miles=0.0,
+            unknown_risk_miles=0.0,
+            risk_score=25.0,
+            data_quality="available",
+        )
+        route_incomplete = make_test_route(
+            route_id="route_incomplete",
+            display_name="Route Incomplete Assessment",
+            duration_seconds=10000,
+            distance_miles=180.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=0.0,
+            unknown_risk_miles=80.0,
+            risk_score=None,
+            data_quality="partial",
+        )
+
+        ranked = self.service.rank_routes([route_incomplete, route_complete])
+
+        # Fully assessed route must be ranked #1
+        self.assertEqual(ranked[0]["route_id"], "route_complete")
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+
+        # Incomplete route ranked #2 and flagged
+        self.assertEqual(ranked[1]["route_id"], "route_incomplete")
+        self.assertEqual(ranked[1]["rank"], 2)
+        self.assertFalse(ranked[1]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["recommendation"]["status"], STATUS_NOT_RECOMMENDED)
+        self.assertEqual(ranked[1]["recommendation"]["assessment_status"], ASSESSMENT_PARTIAL)
+        self.assertEqual(ranked[1]["recommendation"]["eligibility"], ELIGIBILITY_INCOMPLETE)
+        self.assertIn("incomplete weather data", ranked[1]["recommendation"]["explanation"])
+
+    def test_all_routes_incomplete_weather_data_flags_data_quality_caveat(self):
+        """
+        When all available routes lack complete weather data, the service recommends
+        the fastest route while explicitly warning of missing weather forecasts.
+        """
+        route_1 = make_test_route(
+            route_id="route_1",
+            display_name="Route 1",
+            duration_seconds=10000,
+            distance_miles=200.0,
+            unknown_risk_miles=200.0,
+            risk_score=None,
+            data_quality="unavailable",
+        )
+        route_2 = make_test_route(
+            route_id="route_2",
+            display_name="Route 2",
+            duration_seconds=14000,
+            distance_miles=220.0,
+            unknown_risk_miles=220.0,
+            risk_score=None,
+            data_quality="unavailable",
+        )
+
+        ranked = self.service.rank_routes([route_2, route_1])
+        summary = self.service.build_recommendation_summary(ranked)
+
+        self.assertEqual(ranked[0]["route_id"], "route_1")
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[0]["recommendation"]["assessment_status"], ASSESSMENT_UNAVAILABLE)
+        self.assertIn("CAUTION", ranked[0]["recommendation"]["explanation"])
+
+        self.assertEqual(ranked[1]["route_id"], "route_2")
+        self.assertFalse(ranked[1]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[1]["recommendation"]["status"], STATUS_VIABLE_ALTERNATIVE)
+
+        self.assertTrue(summary["incomplete_data_warning"])
+
+    def test_single_available_route_eligible(self):
+        """Single available safe route is ranked #1 and recommended."""
+        route = make_test_route(
+            route_id="only_route",
+            display_name="Only Route",
+            duration_seconds=14400,
+            distance_miles=210.0,
+            severe_risk_miles=0.0,
+            high_risk_miles=0.0,
+            risk_score=15.0,
+        )
+
+        ranked = self.service.rank_routes([route])
+        summary = self.service.build_recommendation_summary(ranked)
+
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertTrue(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[0]["recommendation"]["status"], STATUS_RECOMMENDED)
+        self.assertEqual(summary["recommended_route_id"], "only_route")
+        self.assertEqual(summary["total_options_evaluated"], 1)
+
+    def test_single_available_route_with_no_travel_ineligible(self):
+        """Single available route that encounters No Travel must not be recommended."""
+        route = make_test_route(
+            route_id="hazardous_route",
+            display_name="Hazardous Route",
+            duration_seconds=14400,
+            distance_miles=210.0,
+            no_travel_miles=8.0,
+            no_travel_segments_count=1,
+            risk_score=90.0,
+        )
+
+        ranked = self.service.rank_routes([route])
+        summary = self.service.build_recommendation_summary(ranked)
+
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["rank"], 1)
+        self.assertFalse(ranked[0]["recommendation"]["is_recommended"])
+        self.assertEqual(ranked[0]["recommendation"]["status"], STATUS_NOT_RECOMMENDED)
+        self.assertTrue(summary["all_routes_unsafe"])
+        self.assertIsNone(summary["recommended_route_id"])
+
+    def test_empty_route_list_returns_cleanly(self):
+        """Empty route lists must be handled cleanly without errors."""
+        ranked = self.service.rank_routes([])
+        summary = self.service.build_recommendation_summary([])
+
+        self.assertEqual(ranked, [])
+        self.assertIsNone(summary["recommended_route_id"])
+        self.assertEqual(summary["total_options_evaluated"], 0)
+        self.assertFalse(summary["all_routes_unsafe"])
+        self.assertIn("No route options", summary["executive_summary"])
+
+    def test_top_level_recommendation_summary_fields(self):
+        """Verifies top-level recommendation summary includes required policies and priority rules."""
+        route = make_test_route("r1", "Route 1", 10000, 100.0)
+        ranked = self.service.rank_routes([route])
+        summary = self.service.build_recommendation_summary(ranked)
+
+        self.assertIn("recommended_route_id", summary)
+        self.assertIn("all_routes_unsafe", summary)
+        self.assertIn("incomplete_data_warning", summary)
+        self.assertIn("ranking_priority", summary)
+        self.assertEqual(len(summary["ranking_priority"]), 4)
+        self.assertIn("Fewest miles classified as Severe", summary["ranking_priority"][0])
+        self.assertIn("safety_policy", summary)
+        self.assertIn("data_quality_policy", summary)
+        self.assertIn("executive_summary", summary)
+
+
+class RoutePlanningRecommendationIntegrationTests(APITestCase):
+    """
+    End-to-end integration tests for POST /api/routes/ verifying that
+    lexicographic route ranking and recommendations are included in the API response.
+    """
+
+    def setUp(self):
+        self.url = reverse('plan_routes')
+        self.valid_payload = {
+            "origin": "Chicago, IL",
+            "destination": "Dallas, TX",
+            "departure_datetime": "2026-10-30T08:00:00Z",
+            "load_weight_lb": 35000.0,
+            "checkpoint_interval_miles": 50,
+        }
+
+    @patch.dict('os.environ', {'MAPBOX_ACCESS_TOKEN': 'pk.mock-token'})
+    @patch('requests.get')
+    def test_route_planning_ranks_and_recommends_safest_route(self, mock_get):
+        """Verifies end-to-end route planning ranks routes and produces recommendation_summary."""
+        def side_effect(url, **kwargs):
+            resp = MagicMock()
+            resp.ok = True
+            resp.status_code = 200
+            if "mapbox.places" in url:
+                resp.json.return_value = mock_geocoding_feature()
+            elif "mapbox/driving" in url:
+                resp.json.return_value = {
+                    "code": "Ok",
+                    "routes": [
+                        mock_mapbox_route(1488000.0, 50400.0, "Route A - Calm"),
+                        mock_mapbox_route(1520000.0, 48000.0, "Route B - Windy"),
+                    ]
+                }
+            elif "open-meteo" in url:
+                # Provide favorable weather
+                resp.json.return_value = mock_open_meteo_forecast(
+                    wind_speed=12.0,
+                    precip=0.01,
+                    snow=0.0,
+                    temp=55.0,
+                    weather_code=1,
+                )
+            else:
+                resp.json.return_value = {}
+            return resp
+
+        mock_get.side_effect = side_effect
+
+        response = self.client.post(self.url, self.valid_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        self.assertEqual(data["status"], "planned")
+        self.assertIn("recommendation_summary", data)
+        rec_summary = data["recommendation_summary"]
+        self.assertIsNotNone(rec_summary["recommended_route_id"])
+        self.assertEqual(len(rec_summary["ranking_priority"]), 4)
+
+        routes = data["routes"]
+        self.assertEqual(len(routes), 2)
+        # Route 1 (Rank 1)
+        r1 = routes[0]
+        self.assertEqual(r1["rank"], 1)
+        self.assertTrue(r1["recommendation"]["is_recommended"])
+        self.assertEqual(r1["recommendation"]["status"], STATUS_RECOMMENDED)
+        self.assertIn("ranking_metrics", r1["recommendation"])
+
+        # Route 2 (Rank 2)
+        r2 = routes[1]
+        self.assertEqual(r2["rank"], 2)
+        self.assertFalse(r2["recommendation"]["is_recommended"])
+        self.assertEqual(r2["recommendation"]["status"], STATUS_VIABLE_ALTERNATIVE)
+
 
 
 
