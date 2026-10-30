@@ -74,7 +74,10 @@ class MapboxRoutingService(BaseRouteEngine):
     DEFAULT_TIMEOUT_SECONDS = 10.0
 
     def __init__(self, token: Optional[str] = None):
-        self._token = token or os.environ.get("MAPBOX_ACCESS_TOKEN", "").strip()
+        if token is not None:
+            self._token = token.strip()
+        else:
+            self._token = os.environ.get("MAPBOX_ACCESS_TOKEN", "").strip()
 
     def _get_token(self) -> str:
         if not self._token:
