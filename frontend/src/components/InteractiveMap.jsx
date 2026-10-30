@@ -136,6 +136,100 @@ function createWeatherCheckpointIcon(sequence, layerMeta, layerKey) {
   })
 }
 
+/**
+ * Creates dynamic commercial truck icon that travels along the route as timeline progresses.
+ */
+function createTruckIcon(progressPercent = 0) {
+  const html = `
+    <div class="custom-truck-pin" style="
+      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+      border: 2px solid #60a5fa;
+      color: #ffffff;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 16px rgba(37, 99, 235, 0.85), 0 4px 10px rgba(0, 0, 0, 0.6);
+      font-size: 17px;
+      position: relative;
+    " title="Truck En Route (${progressPercent}% Journey Progress)">
+      <span style="display: flex; align-items: center; justify-content: center; transform: scale(1.05);">🚚</span>
+      <span class="truck-pulse-ring"></span>
+    </div>
+  `
+
+  return L.divIcon({
+    className: 'truck-div-icon',
+    html,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -19],
+  })
+}
+
+/**
+ * Computes vehicle position along the route corridor for a given forecast timestamp.
+ */
+function calculateVehiclePosition(checkpoints, targetIso) {
+  if (!checkpoints || checkpoints.length < 2 || !targetIso) {
+    return null
+  }
+
+  const targetTime = new Date(targetIso).getTime()
+  const firstTime = new Date(checkpoints[0].estimated_arrival).getTime()
+  const lastTime = new Date(checkpoints[checkpoints.length - 1].estimated_arrival).getTime()
+
+  if (isNaN(firstTime) || isNaN(lastTime)) return null
+
+  // Before or at scheduled departure: truck is at Origin
+  if (targetTime <= firstTime) {
+    return {
+      lat: checkpoints[0].latitude,
+      lon: checkpoints[0].longitude,
+      status: 'At Origin (Scheduled Departure)',
+      progressPercent: 0,
+    }
+  }
+
+  // After arrival: truck is at Final Destination
+  if (targetTime >= lastTime) {
+    const last = checkpoints[checkpoints.length - 1]
+    return {
+      lat: last.latitude,
+      lon: last.longitude,
+      status: 'Arrived at Destination',
+      progressPercent: 100,
+    }
+  }
+
+  // In transit: interpolate between closest checkpoints
+  for (let i = 0; i < checkpoints.length - 1; i++) {
+    const cpA = checkpoints[i]
+    const cpB = checkpoints[i + 1]
+    const tA = new Date(cpA.estimated_arrival).getTime()
+    const tB = new Date(cpB.estimated_arrival).getTime()
+
+    if (targetTime >= tA && targetTime <= tB) {
+      const span = tB - tA
+      const factor = span > 0 ? (targetTime - tA) / span : 0
+      const lat = cpA.latitude + (cpB.latitude - cpA.latitude) * factor
+      const lon = cpA.longitude + (cpB.longitude - cpA.longitude) * factor
+      const totalSpan = lastTime - firstTime
+      const progressPercent = totalSpan > 0 ? Math.round(((targetTime - firstTime) / totalSpan) * 100) : 0
+      return {
+        lat,
+        lon,
+        status: `En Route: Between Waypoint #${cpA.sequence} and #${cpB.sequence}`,
+        progressPercent,
+      }
+    }
+  }
+
+  return null
+}
+
 export function InteractiveMap({
   routes = [],
   selectedRouteId = null,
@@ -271,6 +365,9 @@ export function InteractiveMap({
       availabilityMessage: `Forecast observation not recorded for ${activeSlot.label}. Route checkpoints have weather sampled at arrival (${arrivalText}).`,
     }
   }, [activeCheckpoints, activeSlot])
+
+  // Calculate truck vehicle location along the route corridor for the active timeline hour
+  const vehiclePosition = calculateVehiclePosition(activeCheckpoints, activeSlot?.isoTimestamp)
 
   // Endpoints
   const originCheckpoint = activeCheckpoints.length > 0 ? activeCheckpoints[0] : null
@@ -534,6 +631,34 @@ export function InteractiveMap({
                       <strong>Total Distance:</strong> {destinationCheckpoint.distance_from_origin_miles.toFixed(1)} mi
                     </p>
                   )}
+                </div>
+              </Popup>
+            </Marker>
+          )}
+
+          {/* Active Moving Commercial Truck Vehicle Marker (Travels dynamically during timeline playback) */}
+          {vehiclePosition && isValidCoordinate(vehiclePosition.lat, vehiclePosition.lon) && (
+            <Marker
+              key="truck-active-vehicle"
+              position={[vehiclePosition.lat, vehiclePosition.lon]}
+              icon={createTruckIcon(vehiclePosition.progressPercent)}
+              zIndexOffset={1000}
+            >
+              <Popup className="map-custom-popup">
+                <div className="popup-content">
+                  <div className="popup-badge" style={{ background: '#2563eb', color: '#ffffff' }}>
+                    🚚 Freight Truck En Route
+                  </div>
+                  <h4 className="popup-title">{activeRoute?.display_name || 'Commercial Truck'}</h4>
+                  <p className="popup-meta">
+                    <strong>Timeline Horizon:</strong> {activeSlot.label} ({activeSlot.displayTime})
+                  </p>
+                  <p className="popup-meta">
+                    <strong>Status:</strong> {vehiclePosition.status}
+                  </p>
+                  <p className="popup-meta">
+                    <strong>Corridor Journey:</strong> {vehiclePosition.progressPercent}% Completed
+                  </p>
                 </div>
               </Popup>
             </Marker>

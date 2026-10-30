@@ -313,6 +313,15 @@ export function getCheckpointLayerValue(checkpoint, layerKey, targetTimestamp, l
     case 'risk':
     default: {
       category = (matchResult.riskLevel || 'unknown').toLowerCase().replace(/[\s-]+/g, '_')
+      if ((!scale[category] || category === 'unknown') && w) {
+        if (w.wind_speed_mph != null || w.precipitation_in_per_hour != null || w.snowfall_in_per_hour != null) {
+          const windCat = evaluateWindCategory(w.wind_speed_mph, loadWeightLb)
+          const precipCat = evaluatePrecipitationCategory(w.precipitation_in_per_hour != null ? w.precipitation_in_per_hour : w.precipitation_rate_in_per_hour)
+          const snowCat = evaluateSnowfallCategory(w.snowfall_in_per_hour != null ? w.snowfall_in_per_hour : w.snowfall_rate_in_per_hour)
+          const severityOrder = ['no_travel', 'severe', 'high', 'moderate', 'low']
+          category = severityOrder.find((c) => c === windCat || c === precipCat || c === snowCat) || 'low'
+        }
+      }
       if (!scale[category]) category = 'unknown'
       value = checkpoint.risk_score
       displayValue = scale[category]?.label || 'Unknown'

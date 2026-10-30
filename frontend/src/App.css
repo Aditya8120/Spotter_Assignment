@@ -760,6 +760,39 @@
   color: #60a5fa !important;
 }
 
+/* Animated Moving Commercial Truck Pin & Pulse */
+.custom-truck-pin {
+  transition: transform 0.25s ease;
+}
+
+.custom-truck-pin:hover {
+  transform: scale(1.15);
+}
+
+.truck-pulse-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(96, 165, 250, 0.7);
+  animation: truck-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  pointer-events: none;
+}
+
+@keyframes truck-pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.9;
+  }
+  65% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
 .btn-legend-toggle {
   background: #1e293b;
   border: 1px solid #334155;

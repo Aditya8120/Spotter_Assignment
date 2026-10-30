@@ -121,66 +121,91 @@ class OpenMeteoWeatherService(BaseWeatherEngine):
         if not unique_coords:
             return []
 
-        latitudes_str = ",".join(f"{lat:.4f}" for lat, _ in unique_coords)
-        longitudes_str = ",".join(f"{lon:.4f}" for _, lon in unique_coords)
+        MAX_CHUNK_SIZE = 25
+        results: List[Dict[str, Any]] = []
 
-        params = {
-            "latitude": latitudes_str,
-            "longitude": longitudes_str,
-            "hourly": self.HOURLY_VARIABLES,
-            "wind_speed_unit": "mph",
-            "precipitation_unit": "inch",
-            "temperature_unit": "fahrenheit",
-            "timezone": "UTC",
-        }
+        # If 25 or fewer coordinates, single request; otherwise chunk into batches of 25
+        coord_chunks = (
+            [unique_coords]
+            if len(unique_coords) <= MAX_CHUNK_SIZE
+            else [unique_coords[i : i + MAX_CHUNK_SIZE] for i in range(0, len(unique_coords), MAX_CHUNK_SIZE)]
+        )
 
-        try:
-            response = requests.get(
-                self.base_url,
-                params=params,
-                timeout=self.timeout,
-            )
-        except requests.exceptions.Timeout as exc:
-            logger.warning("Open-Meteo forecast request timed out: %s", exc)
-            raise WeatherTimeoutError("Weather provider request timed out.") from exc
-        except requests.exceptions.ConnectionError as exc:
-            logger.error("Open-Meteo connection failure: %s", exc)
-            raise WeatherConnectionError("Unable to connect to weather forecast provider.") from exc
-        except requests.exceptions.RequestException as exc:
-            logger.error("Open-Meteo request error: %s", exc)
-            raise WeatherServiceError(f"Weather request error: {exc}") from exc
+        for chunk in coord_chunks:
+            latitudes_str = ",".join(f"{lat:.4f}" for lat, _ in chunk)
+            longitudes_str = ",".join(f"{lon:.4f}" for _, lon in chunk)
 
-        if response.status_code == 429:
-            logger.warning("Open-Meteo rate limit exceeded.")
-            raise WeatherRateLimitError("Weather provider rate limit exceeded.")
+            params = {
+                "latitude": latitudes_str,
+                "longitude": longitudes_str,
+                "hourly": self.HOURLY_VARIABLES,
+                "wind_speed_unit": "mph",
+                "precipitation_unit": "inch",
+                "temperature_unit": "fahrenheit",
+                "timezone": "UTC",
+            }
 
-        if response.status_code == 400:
-            logger.warning("Open-Meteo returned HTTP 400 Bad Request.")
-            raise WeatherProviderError("Weather provider rejected request (invalid coordinates or query).")
+            response = None
+            for attempt in range(2):
+                try:
+                    response = requests.get(
+                        self.base_url,
+                        params=params,
+                        timeout=self.timeout,
+                    )
+                    if response.status_code == 503 and attempt == 0:
+                        import time
+                        time.sleep(0.5)
+                        continue
+                    break
+                except requests.exceptions.Timeout as exc:
+                    if attempt == 0:
+                        import time
+                        time.sleep(0.5)
+                        continue
+                    logger.warning("Open-Meteo forecast request timed out: %s", exc)
+                    raise WeatherTimeoutError("Weather provider request timed out.") from exc
+                except requests.exceptions.ConnectionError as exc:
+                    logger.error("Open-Meteo connection failure: %s", exc)
+                    raise WeatherConnectionError("Unable to connect to weather forecast provider.") from exc
+                except requests.exceptions.RequestException as exc:
+                    logger.error("Open-Meteo request error: %s", exc)
+                    raise WeatherServiceError(f"Weather request error: {exc}") from exc
 
-        if not response.ok:
-            logger.error("Open-Meteo returned HTTP %s", response.status_code)
-            raise WeatherProviderError(f"Weather provider returned status code {response.status_code}.")
+            if response is None:
+                raise WeatherTimeoutError("Weather provider request timed out.")
 
-        try:
-            data = response.json()
-        except ValueError as exc:
-            logger.error("Open-Meteo returned invalid JSON: %s", exc)
-            raise WeatherProviderError("Weather provider returned malformed JSON.") from exc
+            if response.status_code == 429:
+                logger.warning("Open-Meteo rate limit exceeded.")
+                raise WeatherRateLimitError("Weather provider rate limit exceeded.")
 
-        # When querying multiple coordinates, Open-Meteo returns a JSON list.
-        # When querying a single coordinate, it returns a single JSON object.
-        if isinstance(data, list):
-            results = data
-        elif isinstance(data, dict):
-            if data.get("error"):
-                reason = data.get("reason", "Unknown provider error")
-                raise WeatherProviderError(f"Weather provider error: {reason}")
-            # If multiple coordinates were requested but provider or mock returned a single dict,
-            # replicate it across all requested unique coordinates
-            results = [data] * len(unique_coords)
-        else:
-            raise WeatherProviderError("Unexpected response format from weather provider.")
+            if response.status_code == 400:
+                logger.warning("Open-Meteo returned HTTP 400 Bad Request.")
+                raise WeatherProviderError("Weather provider rejected request (invalid coordinates or query).")
+
+            if not response.ok:
+                logger.error("Open-Meteo returned HTTP %s", response.status_code)
+                raise WeatherProviderError(f"Weather provider returned status code {response.status_code}.")
+
+            try:
+                data = response.json()
+            except ValueError as exc:
+                logger.error("Open-Meteo returned invalid JSON: %s", exc)
+                raise WeatherProviderError("Weather provider returned malformed JSON.") from exc
+
+            # When querying multiple coordinates, Open-Meteo returns a JSON list.
+            # When querying a single coordinate, it returns a single JSON object.
+            if isinstance(data, list):
+                results.extend(data)
+            elif isinstance(data, dict):
+                if data.get("error"):
+                    reason = data.get("reason", "Unknown provider error")
+                    raise WeatherProviderError(f"Weather provider error: {reason}")
+                # If multiple coordinates were requested but provider or mock returned a single dict,
+                # replicate it across all requested unique coordinates in this chunk
+                results.extend([data] * len(chunk))
+            else:
+                raise WeatherProviderError("Unexpected response format from weather provider.")
 
         # Basic structure validation
         for res in results:
@@ -492,8 +517,80 @@ class OpenMeteoWeatherService(BaseWeatherEngine):
             arr_dt = self._parse_utc_datetime(cp.get("estimated_arrival"))
 
             cp["weather"] = self.match_forecast_for_arrival(forecast_data, arr_dt)
+            cp["hourly_forecast"] = self.extract_hourly_forecast_series(forecast_data, arr_dt)
 
         return checkpoints
+
+    def extract_hourly_forecast_series(
+        self,
+        forecast_data: Dict[str, Any],
+        base_dt: Optional[datetime],
+        hours: int = 48,
+    ) -> List[Dict[str, Any]]:
+        """
+        Extracts hourly forecast observations for a 0–48 hour horizon relative to base_dt.
+        """
+        if not forecast_data or not base_dt:
+            return []
+
+        hourly = forecast_data.get("hourly", {})
+        time_strings = hourly.get("time", [])
+        if not time_strings:
+            return []
+
+        slot_map: Dict[str, int] = {}
+        for idx, t_str in enumerate(time_strings):
+            parsed = self._parse_utc_datetime(t_str)
+            if parsed:
+                slot_map[parsed.strftime("%Y-%m-%dT%H:00")] = idx
+
+        start_hour = base_dt.replace(minute=0, second=0, microsecond=0)
+        series = []
+
+        temps = hourly.get("temperature_2m", [])
+        wcodes = hourly.get("weather_code", [])
+        wspeeds = hourly.get("wind_speed_10m", [])
+        wgusts = hourly.get("wind_gusts_10m", [])
+        precips = hourly.get("precipitation", [])
+        snows = hourly.get("snowfall", [])
+        pprobs = hourly.get("precipitation_probability", [])
+
+        for h in range(hours + 1):
+            slot_dt = start_hour + timedelta(hours=h)
+            slot_key = slot_dt.strftime("%Y-%m-%dT%H:00")
+            idx = slot_map.get(slot_key)
+            if idx is not None and idx < len(temps):
+                raw_temp = temps[idx]
+                raw_wcode = wcodes[idx] if idx < len(wcodes) else None
+                raw_wspeed = wspeeds[idx] if idx < len(wspeeds) else None
+                raw_wgust = wgusts[idx] if idx < len(wgusts) else None
+                raw_precip = precips[idx] if idx < len(precips) else None
+                raw_snow = snows[idx] if idx < len(snows) else None
+                raw_pprob = pprobs[idx] if idx < len(pprobs) else None
+
+                temp_val = round(float(raw_temp), 1) if raw_temp is not None else None
+                wcode_val = int(raw_wcode) if raw_wcode is not None else None
+                wind_mph = round(float(raw_wspeed), 1) if raw_wspeed is not None else None
+                gust_mph = round(float(raw_wgust), 1) if raw_wgust is not None else None
+                precip_rate = round(float(raw_precip), 2) if raw_precip is not None else None
+                snow_rate = round(float(raw_snow), 2) if raw_snow is not None else None
+
+                series.append({
+                    "forecast_timestamp": slot_dt.isoformat(),
+                    "hour_offset": h,
+                    "temperature": temp_val,
+                    "condition": WMO_WEATHER_CODES.get(wcode_val) if wcode_val is not None else None,
+                    "weather_code": wcode_val,
+                    "wind_speed_mph": wind_mph,
+                    "wind_gust_mph": gust_mph,
+                    "precipitation_in_per_hour": precip_rate,
+                    "snowfall_in_per_hour": snow_rate,
+                    "precipitation_rate_in_per_hour": precip_rate,
+                    "snowfall_rate_in_per_hour": snow_rate,
+                    "precipitation_probability": float(raw_pprob) if raw_pprob is not None else None,
+                })
+
+        return series
 
     def attach_weather_to_routes(
         self,

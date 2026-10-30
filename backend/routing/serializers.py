@@ -258,6 +258,11 @@ class CheckpointSerializer(serializers.Serializer):
         default='unknown'
     )
     risk_score = serializers.FloatField(allow_null=True, required=False)
+    hourly_forecast = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list
+    )
     risk_components = serializers.DictField(allow_null=True, required=False)
     risk_factors = serializers.ListField(child=serializers.CharField(), default=list, required=False)
     risk_summary = serializers.CharField(allow_null=True, required=False)
