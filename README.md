@@ -791,18 +791,19 @@ The dashboard includes a fully interactive, responsive map canvas powered by **L
   - **Rule**: Missing, null, or unrecognized risk data is strictly mapped to **Unknown**, never Low.
 - **Interactive Popups**: Clicking any checkpoint displays waypoint name, sequence number, distance from origin, estimated arrival time, risk level badge, risk summary, and weather observations (temperature, sustained wind, gusts, precipitation rate, snowfall rate).
 
-### 5. OpenStreetMap Tile Source & Usage Policy
+### 5. Free Public Tile Sources & Light/Dark Mode Toggle
 
-- **Default Tile URL**: `https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`
-- **Attribution**: `&copy; OpenStreetMap contributors`
-- **Configurable**: Configurable via `VITE_MAP_TILE_URL` and `VITE_MAP_TILE_ATTRIBUTION`.
-- **Policy Compliance**: In accordance with the [OpenStreetMap Tile Usage Policy](https://operations.osmfoundation.org/policies/tiles/), tiles are accessed with fair-use request rates, caching, and clear attribution. High-volume commercial production deployments must use dedicated commercial tile providers (Mapbox, Stadia, Protomaps, Thunderforest) or a self-hosted tile cache.
+The interactive map includes a native **Light / Dark Mode Toggle** with visual Sun (☀️) and Moon (🌙) indicator icons:
+- **🌙 Dark Map Mode (Default)**: Uses **CartoDB Dark Matter** (`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png`). Provides a sleek, high-contrast night view where glowing corridor risk polylines and weather heatmaps stand out vividly. 100% free public raster tiles with zero API key required.
+- **☀️ Light Map Mode**: Uses **OpenStreetMap Standard** (`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`). Delivers clean, daylight cartography with full geographic details. 100% free public tiles.
+- **Persistence**: User preference is automatically saved to `localStorage` (`weather_map_theme`), restoring their preferred appearance across page reloads.
+- **Zero API Billing**: Both modes consume $0 in tile fees and do not require commercial Mapbox GL vector tile subscriptions.
 
 ### 6. Automated Testing
 
-The frontend automated test suite includes **64 tests** across 24 suites:
+The frontend automated test suite includes **66 tests** across 25 suites:
 - **`src/services/api.test.js`**: Payload construction, HTTP responses, error normalization, and health checks.
-- **`src/utils/mapUtils.test.js`**: Coordinate validation, GeoJSON coordinate transformation, bounding box calculation, risk level metadata mapping, route polyline styles, and checkpoint extraction.
+- **`src/utils/mapUtils.test.js`**: Coordinate validation, GeoJSON coordinate transformation, bounding box calculation, risk level metadata mapping, route polyline styles, checkpoint extraction, and light/dark `MAP_THEMES` configuration.
 - **`src/utils/mapIntegration.test.js`**: Route selection state transitions, multi-segment corridor rendering with mocked data, checkpoint risk marker classifications, missing geometry handling, and empty result safety.
 - **`src/utils/weatherLayers.test.js`**: Wind/precipitation/snowfall threshold evaluations, load-weight elevations, 0–48h timeline generation, timestamp matching, and layer value extraction.
 - **`src/utils/weatherLayersIntegration.test.js`**: Dynamic layer switching, stale data prevention across unrecorded hours, route-selection preservation during slider scrubbing, and empty state resilience.
@@ -810,7 +811,7 @@ The frontend automated test suite includes **64 tests** across 24 suites:
 - **`src/e2e/demoCorridor.test.js`**: Verification of simulated demo corridor fixtures, route coordinate integrity, and weather layer evaluations.
 
 ```bash
-# Run all frontend tests (64 tests)
+# Run all frontend tests (66 tests)
 cd frontend && npm test
 
 # Run linter
@@ -881,7 +882,7 @@ The complete application pipeline was verified through end-to-end integration an
 | Suite / Check | Command | Result | Details |
 | :--- | :--- | :--- | :--- |
 | **Backend Tests** | `python manage.py test` | **81 Passed** (0 Failures) | Health, serializers, Mapbox service, Open-Meteo service, risk scoring, load rules, lexicographical ranking, No Travel flags, missing weather preservation. |
-| **Frontend Tests** | `npm test` | **64 Passed** (0 Failures) | API client, error mapping, coordinate transformations, map integration, layer thresholds, timeline slider, end-to-end dispatch flow, demo fixture verification. |
+| **Frontend Tests** | `npm test` | **66 Passed** (0 Failures) | API client, error mapping, coordinate transformations, map integration, layer thresholds, timeline slider, end-to-end dispatch flow, demo fixture verification, light/dark map themes. |
 | **Frontend Linter** | `npm run lint` | **0 Errors, 0 Warnings** | Oxlint verified 23 files. |
 | **Production Build** | `npm run build` | **Passed in 138ms** | Vite production bundle generated without errors or circular dependencies. |
 | **Live API Contracts** | `curl` against local daemons | **Verified** | Health endpoint `200 OK`, unconfigured provider returns clear `503 provider_not_configured`. |

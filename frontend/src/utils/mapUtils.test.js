@@ -8,6 +8,8 @@ import {
   getRouteStyle,
   extractRouteCheckpoints,
   RISK_LEVEL_META,
+  MAP_THEMES,
+  DEFAULT_TILE_URL,
 } from './mapUtils.js'
 
 describe('mapUtils - isValidCoordinate', () => {
@@ -195,5 +197,29 @@ describe('mapUtils - extractRouteCheckpoints', () => {
     assert.deepStrictEqual(extractRouteCheckpoints(null), [])
     assert.deepStrictEqual(extractRouteCheckpoints({}), [])
     assert.deepStrictEqual(extractRouteCheckpoints({ checkpoints: [] }), [])
+  })
+})
+
+describe('mapUtils - MAP_THEMES Light/Dark Mode', () => {
+  test('provides free public tile configurations for both dark and light modes', () => {
+    assert.ok(MAP_THEMES.dark)
+    assert.ok(MAP_THEMES.light)
+
+    // Dark theme properties
+    assert.strictEqual(MAP_THEMES.dark.id, 'dark')
+    assert.strictEqual(MAP_THEMES.dark.icon, '🌙')
+    assert.ok(MAP_THEMES.dark.tileUrl.includes('cartocdn.com/dark_all'))
+    assert.ok(MAP_THEMES.dark.attribution.includes('CARTO'))
+
+    // Light theme properties
+    assert.strictEqual(MAP_THEMES.light.id, 'light')
+    assert.strictEqual(MAP_THEMES.light.icon, '☀️')
+    assert.ok(MAP_THEMES.light.tileUrl.includes('tile.openstreetmap.org'))
+    assert.ok(MAP_THEMES.light.attribution.includes('OpenStreetMap'))
+  })
+
+  test('DEFAULT_TILE_URL is defined and non-empty', () => {
+    assert.ok(DEFAULT_TILE_URL)
+    assert.strictEqual(typeof DEFAULT_TILE_URL, 'string')
   })
 })

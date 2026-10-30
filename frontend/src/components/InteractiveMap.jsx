@@ -4,8 +4,7 @@ import L from 'leaflet'
 import {
   DEFAULT_MAP_CENTER,
   DEFAULT_MAP_ZOOM,
-  DEFAULT_TILE_URL,
-  DEFAULT_TILE_ATTRIBUTION,
+  MAP_THEMES,
   parseRouteGeometry,
   getBoundsFromCoordinates,
   getRouteStyle,
@@ -151,6 +150,27 @@ export function InteractiveMap({
   const [showLegend, setShowLegend] = useState(true)
   const [activeWeatherLayer, setActiveWeatherLayer] = useState('risk')
   const [selectedHourOffset, setSelectedHourOffset] = useState(0)
+  const [mapTheme, setMapTheme] = useState(() => {
+    try {
+      return localStorage.getItem('weather_map_theme') || 'dark'
+    } catch {
+      return 'dark'
+    }
+  })
+
+  const toggleMapTheme = () => {
+    setMapTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark'
+      try {
+        localStorage.setItem('weather_map_theme', next)
+      } catch {
+        // ignore storage errors
+      }
+      return next
+    })
+  }
+
+  const activeThemeMeta = MAP_THEMES[mapTheme] || MAP_THEMES.dark
   const isSimulatedMap = isDemo || routes.some((r) => r.route_id?.startsWith('demo_') || r.is_demo_data)
 
   // Find currently selected route or default to first/recommended
@@ -306,6 +326,40 @@ export function InteractiveMap({
               SIMULATED DATA
             </span>
           )}
+
+          {/* Light / Dark Mode Toggle with Sun / Moon Icons */}
+          <button
+            type="button"
+            className={`btn-map-theme ${mapTheme}`}
+            onClick={toggleMapTheme}
+            aria-label={`Switch to ${mapTheme === 'dark' ? 'light' : 'dark'} map mode`}
+            title={`Switch to ${mapTheme === 'dark' ? 'Light Map Mode (☀️)' : 'Dark Map Mode (🌙)'}`}
+          >
+            {mapTheme === 'dark' ? (
+              <>
+                <svg className="theme-icon sun-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+                <span>Light Map</span>
+              </>
+            ) : (
+              <>
+                <svg className="theme-icon moon-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+                <span>Dark Map</span>
+              </>
+            )}
+          </button>
+
           <button
             type="button"
             className="btn-legend-toggle"
@@ -315,7 +369,7 @@ export function InteractiveMap({
           >
             {showLegend ? 'Hide Legend' : 'Show Legend'}
           </button>
-          <span className="badge badge-subtle">OpenStreetMap Tiles</span>
+          <span className="badge badge-subtle">{activeThemeMeta.badgeLabel}</span>
         </div>
       </div>
 
@@ -335,7 +389,7 @@ export function InteractiveMap({
       />
 
       {/* 4. Map Canvas Area */}
-      <div className="map-viewport-wrapper">
+      <div className={`map-viewport-wrapper theme-${mapTheme}`}>
         <MapContainer
           center={DEFAULT_MAP_CENTER}
           zoom={DEFAULT_MAP_ZOOM}
@@ -346,10 +400,11 @@ export function InteractiveMap({
           {/* Dynamic Viewport Controller */}
           {mapBounds && <MapBoundsController bounds={mapBounds} />}
 
-          {/* OpenStreetMap Tile Layer */}
+          {/* Dynamic Tile Layer (CartoDB Dark Matter / OpenStreetMap Light) */}
           <TileLayer
-            attribution={DEFAULT_TILE_ATTRIBUTION}
-            url={DEFAULT_TILE_URL}
+            key={`tile-layer-${mapTheme}`}
+            attribution={activeThemeMeta.attribution}
+            url={activeThemeMeta.tileUrl}
             maxZoom={19}
           />
 

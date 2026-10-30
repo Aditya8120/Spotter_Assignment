@@ -3,14 +3,35 @@
  * risk-level styling, Leaflet marker creation, and bounds calculation.
  */
 
-// Default OpenStreetMap tile layer and attribution (in accordance with OSM Tile Usage Policy)
-export const DEFAULT_TILE_URL =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_MAP_TILE_URL) ||
-  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+// Free public tile configurations for Light and Dark modes (100% Free Tier, No API key required)
+export const MAP_THEMES = {
+  dark: {
+    id: 'dark',
+    name: 'Dark Map',
+    icon: '🌙',
+    tileUrl:
+      (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_MAP_TILE_URL_DARK) ||
+      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>',
+    badgeLabel: 'CartoDB Dark Matter (Free Public Tiles)',
+  },
+  light: {
+    id: 'light',
+    name: 'Light Map',
+    icon: '☀️',
+    tileUrl:
+      (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_MAP_TILE_URL_LIGHT) ||
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+    badgeLabel: 'OpenStreetMap Light (Free Public Tiles)',
+  },
+}
 
-export const DEFAULT_TILE_ATTRIBUTION =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_MAP_TILE_ATTRIBUTION) ||
-  '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'
+// Default OpenStreetMap tile layer and attribution for backwards-compatibility
+export const DEFAULT_TILE_URL = MAP_THEMES.dark.tileUrl
+export const DEFAULT_TILE_ATTRIBUTION = MAP_THEMES.dark.attribution
 
 // Default center (Geographic center of Contiguous United States) and zoom level
 export const DEFAULT_MAP_CENTER = [39.8283, -98.5795]

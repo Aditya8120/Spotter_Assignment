@@ -671,6 +671,63 @@
   font-size: 11px;
 }
 
+.btn-map-theme {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 4px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-map-theme:hover {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #3b82f6;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+}
+
+.btn-map-theme.dark {
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #93c5fd;
+}
+
+.btn-map-theme.light {
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fde68a;
+}
+
+.btn-map-theme .theme-icon {
+  flex-shrink: 0;
+  transition: transform 0.25s ease;
+}
+
+.btn-map-theme:hover .theme-icon {
+  transform: rotate(18deg) scale(1.1);
+}
+
+.btn-map-theme .sun-icon {
+  color: #fbbf24;
+}
+
+.btn-map-theme .moon-icon {
+  color: #c084fc;
+}
+
+.map-viewport-wrapper.theme-light .leaflet-tile-pane {
+  filter: contrast(102%) brightness(98%);
+}
+
+.map-viewport-wrapper.theme-dark .leaflet-tile-pane {
+  filter: brightness(96%) contrast(105%);
+}
+
 .btn-legend-toggle {
   background: #1e293b;
   border: 1px solid #334155;
