@@ -113,12 +113,34 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / os.environ.get('DJANGO_DB_NAME', 'db.sqlite3'),
+DATABASE_URL = os.environ.get('DATABASE_URL')
+if DATABASE_URL:
+    import urllib.parse
+    _parsed_db = urllib.parse.urlparse(DATABASE_URL)
+    _engine_map = {
+        'postgres': 'django.db.backends.postgresql',
+        'postgresql': 'django.db.backends.postgresql',
+        'psql': 'django.db.backends.postgresql',
+        'mysql': 'django.db.backends.mysql',
+        'sqlite': 'django.db.backends.sqlite3',
     }
-}
+    DATABASES = {
+        'default': {
+            'ENGINE': _engine_map.get(_parsed_db.scheme, 'django.db.backends.postgresql'),
+            'NAME': _parsed_db.path.lstrip('/') or os.environ.get('DJANGO_DB_NAME', 'db.sqlite3'),
+            'USER': urllib.parse.unquote(_parsed_db.username or ''),
+            'PASSWORD': urllib.parse.unquote(_parsed_db.password or ''),
+            'HOST': _parsed_db.hostname or '',
+            'PORT': str(_parsed_db.port) if _parsed_db.port else '',
+        }
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / os.environ.get('DJANGO_DB_NAME', 'db.sqlite3'),
+        }
+    }
 
 
 

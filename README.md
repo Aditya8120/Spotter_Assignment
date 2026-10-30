@@ -58,7 +58,8 @@ The supported environment variables and their default development values:
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Comma-separated list of allowed hostnames. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated origins allowed for cross-origin frontend requests. |
 | `DJANGO_DB_NAME` | `db.sqlite3` | SQLite database file name located under `backend/`. |
-| `MAPBOX_ACCESS_TOKEN` | *(none)* | Mapbox public/secret token for Directions & Geocoding APIs. |
+| `DATABASE_URL` | *(optional)* | Production database connection string (e.g. `postgresql://user:pass@host:5432/dbname`). If omitted, defaults to SQLite. |
+| `MAPBOX_ACCESS_TOKEN` | *(none)* | Mapbox public token for Directions & Geocoding APIs. |
 
 ### Mapbox Account & Token Setup
 
