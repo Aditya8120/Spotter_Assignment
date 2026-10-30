@@ -11,10 +11,14 @@ export const MAP_THEMES = {
     icon: '🌙',
     tileUrl:
       (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_MAP_TILE_URL_DARK) ||
-      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>',
-    badgeLabel: 'CartoDB Dark Matter (Free Public Tiles)',
+      '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+    badgeLabel:
+      (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_MAP_TILE_URL_DARK)
+        ? 'Custom Dark Tiles'
+        : 'OpenStreetMap Dark (Keyless Free Tier)',
+    useCssDarkFilter: !(typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_MAP_TILE_URL_DARK),
   },
   light: {
     id: 'light',
@@ -25,7 +29,8 @@ export const MAP_THEMES = {
       'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
-    badgeLabel: 'OpenStreetMap Light (Free Public Tiles)',
+    badgeLabel: 'OpenStreetMap Light (Keyless Free Tier)',
+    useCssDarkFilter: false,
   },
 }
 

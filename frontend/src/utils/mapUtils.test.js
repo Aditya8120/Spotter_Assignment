@@ -205,17 +205,19 @@ describe('mapUtils - MAP_THEMES Light/Dark Mode', () => {
     assert.ok(MAP_THEMES.dark)
     assert.ok(MAP_THEMES.light)
 
-    // Dark theme properties
+    // Dark theme properties (Keyless public OpenStreetMap tiles + CSS dark filter)
     assert.strictEqual(MAP_THEMES.dark.id, 'dark')
     assert.strictEqual(MAP_THEMES.dark.icon, '🌙')
-    assert.ok(MAP_THEMES.dark.tileUrl.includes('cartocdn.com/dark_all'))
-    assert.ok(MAP_THEMES.dark.attribution.includes('CARTO'))
+    assert.ok(MAP_THEMES.dark.tileUrl.includes('tile.openstreetmap.org'))
+    assert.ok(MAP_THEMES.dark.attribution.includes('OpenStreetMap'))
+    assert.strictEqual(MAP_THEMES.dark.useCssDarkFilter, true)
 
     // Light theme properties
     assert.strictEqual(MAP_THEMES.light.id, 'light')
     assert.strictEqual(MAP_THEMES.light.icon, '☀️')
     assert.ok(MAP_THEMES.light.tileUrl.includes('tile.openstreetmap.org'))
     assert.ok(MAP_THEMES.light.attribution.includes('OpenStreetMap'))
+    assert.strictEqual(MAP_THEMES.light.useCssDarkFilter, false)
   })
 
   test('DEFAULT_TILE_URL is defined and non-empty', () => {

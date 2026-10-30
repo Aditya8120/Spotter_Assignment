@@ -389,7 +389,11 @@ export function InteractiveMap({
       />
 
       {/* 4. Map Canvas Area */}
-      <div className={`map-viewport-wrapper theme-${mapTheme}`}>
+      <div
+        className={`map-viewport-wrapper theme-${mapTheme} ${
+          activeThemeMeta.useCssDarkFilter ? 'css-dark-filter' : 'custom-dark-tiles'
+        }`}
+      >
         <MapContainer
           center={DEFAULT_MAP_CENTER}
           zoom={DEFAULT_MAP_ZOOM}
