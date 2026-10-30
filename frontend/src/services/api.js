@@ -4,6 +4,8 @@
  * error normalization, and response parsing for route planning and system health.
  */
 
+import { enrichRoutesWithClientWeather } from '../utils/clientWeatherEnricher.js'
+
 // Read base URL from Vite environment variable or fall back to local Django development port
 export const API_BASE_URL =
   (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
@@ -124,6 +126,9 @@ export async function planRoutes(formData, options = {}) {
 
     // Success response
     if (response.ok) {
+      if (responseData && Array.isArray(responseData.routes)) {
+        return await enrichRoutesWithClientWeather(responseData, payload?.load_weight_lb)
+      }
       return responseData
     }
 
